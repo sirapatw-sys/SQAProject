@@ -1,0 +1,10 @@
+PLACEHOLDER
+
+Project: {project}
+Bug ID: {bug_id}
+Target class: {target_class}
+Source code:
+{source_code}
+
+Supporting context:
+{supporting_context}

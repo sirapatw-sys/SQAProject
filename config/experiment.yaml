@@ -1,0 +1,56 @@
+experiment:
+  name: sqa-defects4j-benchmark
+  protocol_version: "0.1-pilot"
+
+defects4j:
+  include_deprecated: false
+
+  # Protocol decision. Keep configurable until the group/instructor freezes it.
+  # "f" = generate against fixed version, "b" = generate against buggy version.
+  generation_version: "f"
+
+  # Provisional pilot scope only.
+  # "modified" is practical but uses bug-fix metadata, so document/confirm it
+  # before the final benchmark. Other future options: all_public, custom.
+  target_scope: "modified"
+
+  cleanup_workspace_after_bug: true
+
+execution:
+  per_method_timeout_seconds: 300
+  continue_on_error: true
+
+methods:
+  hill_climbing:
+    enabled: true
+    repetitions: 3
+    seeds: [101, 202, 303]
+    max_evaluations: 10000
+
+  avm:
+    enabled: true
+    repetitions: 3
+    seeds: [101, 202, 303]
+    max_evaluations: 10000
+
+  gpt:
+    enabled: true
+    repetitions: 1
+    temperature: 0
+
+  gemini:
+    enabled: true
+    repetitions: 1
+    temperature: 0
+
+evaluation:
+  record:
+    - compile_success
+    - execution_success
+    - tests_generated
+    - line_coverage
+    - branch_coverage
+    - fault_detected
+    - generation_seconds
+    - execution_seconds
+    - error_type

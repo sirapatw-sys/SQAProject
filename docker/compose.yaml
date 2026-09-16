@@ -1,0 +1,16 @@
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    working_dir: /workspace
+    env_file:
+      - ../.env
+    environment:
+      TZ: America/Los_Angeles
+      D4J_HOME: /opt/defects4j
+    volumes:
+      - ..:/workspace
+      - ${D4J_ROOT}:/opt/defects4j
+    stdin_open: true
+    tty: true

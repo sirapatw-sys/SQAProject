@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Local Defects4J / large data
+defects4j/
+data/
+cache/
+.work/
+workspaces/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Java/build outputs
+*.class
+target/
+build/
+out/
+
+# Logs/temp
+*.log
+*.tmp
+tmp/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

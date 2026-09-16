@@ -1,0 +1,21 @@
+{
+  "project": "Chart",
+  "bug_id": 1,
+  "generated_for_version": "f",
+  "method": "hill_climbing",
+  "run_id": "seed-101",
+  "worker_id": "member_01",
+  "status": "success",
+  "compile_success": true,
+  "execution_success": true,
+  "tests_generated": 0,
+  "line_coverage": null,
+  "branch_coverage": null,
+  "fault_detected": null,
+  "generation_seconds": null,
+  "execution_seconds": null,
+  "error_type": null,
+  "config_hash": null,
+  "prompt_hash": null,
+  "notes": null
+}

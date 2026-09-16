@@ -1,0 +1,4 @@
+PLACEHOLDER
+
+Put the frozen Gemini system prompt here after the prompt protocol is finalized.
+Keep the testing requirements equivalent to GPT for a fair comparison.
