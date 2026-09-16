@@ -23,9 +23,16 @@ RUN apt-get update -y && \
       tzdata && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Defects4J Perl dependencies
+COPY docker/cpanfile /tmp/defects4j-perl/cpanfile
+
+RUN cd /tmp/defects4j-perl && \
+    cpanm --notest --installdeps .
+
 WORKDIR /workspace
 
 COPY requirements.txt /tmp/requirements.txt
+
 RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 CMD ["bash"]
