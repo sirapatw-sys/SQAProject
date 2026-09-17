@@ -331,33 +331,8 @@ def parse_shard(value: str | None) -> tuple[int, int] | None:
     return i, n
 
 
-def parse_case_range(value: str | None) -> tuple[int, int] | None:
-    if not value:
-        return None
-    try:
-        start_text, end_text = value.split("-", 1)
-        start, end = int(start_text), int(end_text)
-    except Exception as exc:
-        raise argparse.ArgumentTypeError(
-            "--case-range must look like 1-285"
-        ) from exc
-
-    if start < 1 or end < start:
-        raise argparse.ArgumentTypeError(
-            "--case-range must satisfy 1 <= start <= end"
-        )
-
-    return start, end
-
-
 def select_cases(args: argparse.Namespace) -> list[dict[str, str]]:
     cases = sorted(d4j.load_cases(), key=lambda r: (r["project"], int(r["bug_id"])))
-
-    case_range = parse_case_range(args.case_range)
-    if case_range:
-        start, end = case_range
-        cases = cases[start - 1:end]
-
     if args.project:
         cases = [c for c in cases if c["project"] == args.project]
     if args.bug is not None:
@@ -378,23 +353,13 @@ def main() -> None:
     ap.add_argument("--bug", type=int)
     ap.add_argument("--all", action="store_true", help="Run all enabled rows in config/cases.csv")
     ap.add_argument("--shard", help="Split cases deterministically, e.g. 1/3")
-    ap.add_argument(
-        "--case-range",
-        help="Run a 1-based inclusive range of enabled cases, e.g. 1-285",
-    )
     ap.add_argument("--worker", default=safe_name(socket.gethostname()), help="Worker/member name stored with results")
     ap.add_argument("--methods", nargs="+", choices=METHODS, default=list(METHODS))
     ap.add_argument("--limit", type=int)
     ap.add_argument("--force", action="store_true", help="Rerun even completed checkpoints")
     args = ap.parse_args()
-    if (
-        not args.all
-        and not args.project
-        and args.bug is None
-        and not args.shard
-        and not args.case_range
-    ):
-        ap.error("Use --all, --project/--bug, --shard, or --case-range")
+    if not args.all and not args.project and args.bug is None and not args.shard:
+        ap.error("Use --all, --project/--bug, or --shard")
 
     settings = d4j.load_settings()
     cases = select_cases(args)
