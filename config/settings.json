@@ -1,0 +1,26 @@
+{
+  "seeds": [
+    101,
+    202,
+    303
+  ],
+  "ai_repetitions": 3,
+  "max_methods_per_case": 5,
+  "search_max_evaluations": 20,
+  "search_restarts": 2,
+  "candidate_timeout_sec": 30,
+  "test_timeout_sec": 120,
+  "api_timeout_sec": 180,
+  "api_max_retries": 4,
+  "prompt_version": "v1",
+  "ai_max_output_tokens": 4096,
+  "ai_source_max_chars": 50000,
+  "gpt_model": "gpt-5.6-luna",
+  "gpt_base_url": "https://api.openai.com/v1/responses",
+  "gemini_model": "gemini-3.1-flash-lite",
+  "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta",
+  "stateful_max_setup_actions": 4,
+  "stateful_max_setup_parameters": 2,
+  "stateful_max_setup_steps": 2,
+  "stateful_max_sequences": 8
+}

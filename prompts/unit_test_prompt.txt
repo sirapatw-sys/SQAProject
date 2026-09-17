@@ -1,0 +1,35 @@
+You are generating Java unit tests for a Defects4J fixed revision.
+
+Rules:
+- Use only the supplied production source, public API information, and build/test context.
+- Do not assume knowledge of the buggy revision, patch, issue report, or triggering test.
+- Do not assume any bug-location information beyond the supplied TARGET CLASS / TARGET METHODS.
+- Do not modify production code.
+- Use JUnit 4 (org.junit.Test and org.junit.Assert).
+- Return exactly one complete Java test class in a single ```java code block.
+- Generate no more than one @Test method for each listed target method; do not add unrelated @Test methods.
+- Do not use a package declaration.
+- Keep tests deterministic and independent.
+- Prefer public constructors and public methods.
+- If a reliable assertion cannot be derived, prefer a weaker but valid property (nullness, stable primitive/String value, or no exception) rather than inventing behavior.
+- The file must compile with the supplied project test classpath.
+
+PROJECT: {project}
+BUG ID: {bug_id}
+TARGET CLASS: {target_class}
+CONCRETE CLASS: {concrete_class}
+PROMPT VERSION: {prompt_version}
+
+PUBLIC API:
+{public_api}
+
+CONCRETE CLASS PUBLIC API:
+{concrete_api}
+
+TARGET METHODS FOR THIS BENCHMARK RUN:
+{selected_methods}
+
+Focus assertions on the target methods above. You may call other public APIs only for necessary setup.
+
+PRODUCTION SOURCE:
+{source}

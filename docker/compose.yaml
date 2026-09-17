@@ -1,0 +1,15 @@
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    user: "${LOCAL_UID}:${LOCAL_GID}"
+    working_dir: /workspace
+    environment:
+      TZ: America/Los_Angeles
+      D4J_HOME: /opt/defects4j
+      HOME: /tmp
+    volumes:
+      - ..:/workspace
+      - ${D4J_ROOT}:/opt/defects4j
+    command: ["bash", "-lc", "sleep infinity"]

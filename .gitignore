@@ -1,0 +1,31 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.work/
+harness/classes/
+results/workers/
+results/tmp/
+logs/*.log
+generated_tests/**/*.java
+
+# Local secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime / benchmark workspace
+.work/
+logs/
+
+# Pilot/generated outputs
+results/
+generated_tests/
+
+# Local downloaded tools
+tools/jacoco/*.jar
+
+# Windows metadata
+*:Zone.Identifier
