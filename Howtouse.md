@@ -60,40 +60,27 @@ python3 d4j.py check
 
 รูปแบบ:
 
-python3 run.py \
-  --project PROJECT \
-  --bug BUG_ID \
-  --methods hill_climbing avm gpt gemini \
-  --worker ชื่อคนรัน
+## แบ่งงาน 3 คน
 
-ตัวอย่าง Chart-1:
+Member 1
 
-python3 run.py \
-  --project Chart \
-  --bug 1 \
+python3 run.py --case-range 1-285 \
   --methods hill_climbing avm gpt gemini \
   --worker member1
 
-ตัวอย่าง Lang-5:
+Member 2
 
-python3 run.py \
-  --project Lang \
-  --bug 5 \
+python3 run.py --case-range 286-570 \
   --methods hill_climbing avm gpt gemini \
   --worker member2
-รันเฉพาะ Algorithm
-python3 run.py \
-  --project Chart \
-  --bug 1 \
-  --methods hill_climbing avm \
-  --worker member1
-รันเฉพาะ AI
-python3 run.py \
-  --project Chart \
-  --bug 1 \
-  --methods gpt gemini \
-  --worker member1
-ถ้าโปรแกรมหยุด / เน็ตหลุด / quota หมด
+
+Member 3
+
+python3 run.py --case-range 571-854 \
+  --methods hill_climbing avm gpt gemini \
+  --worker member3
+
+ถ้าเครื่องดับหรือ quota หมด ให้รันคำสั่งเดิมอีกครั้ง ระบบจะทำต่อจากที่ค้าง
 
 รันคำสั่งเดิมอีกครั้งได้เลย
 
