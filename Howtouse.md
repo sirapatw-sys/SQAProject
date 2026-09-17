@@ -1,5 +1,6 @@
 ## ⚠️ สำคัญ: ห้ามเปลี่ยน Configuration ระหว่างการทดลอง
 Path file ที่แนะนำ: /home/ชื่อผู้ใช้/SQAProject
+
 ผลการทดลองแต่ละ Run จะมี `experiment_id` เพื่อระบุว่าใช้
 Code, Configuration, Prompt และเงื่อนไขการทดลองชุดใด
 
