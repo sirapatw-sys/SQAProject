@@ -1,3 +1,36 @@
+## ⚠️ สำคัญ: ห้ามเปลี่ยน Configuration ระหว่างการทดลอง
+Path file ที่แนะนำ: /home/ชื่อผู้ใช้/SQAProject
+ผลการทดลองแต่ละ Run จะมี `experiment_id` เพื่อระบุว่าใช้
+Code, Configuration, Prompt และเงื่อนไขการทดลองชุดใด
+
+ถ้ามีการเปลี่ยน เช่น
+
+- `config/settings.json`
+- Model ของ GPT / Gemini
+- Seed
+- Search Budget
+- จำนวน Repetition
+- จำนวน Target Methods
+- Prompt
+- Logic ของ Hill Climbing / AVM
+- Logic การ Generate หรือ Evaluate Test
+
+`experiment_id` อาจเปลี่ยน
+
+ผลที่มี `experiment_id` ต่างกัน **จะไม่สามารถนำมารวมด้วย `analyze.py`
+เป็นการทดลองเดียวกันได้** เพราะเงื่อนไขการทดลองไม่เหมือนกัน
+
+ดังนั้นก่อนเริ่ม Final Benchmark สมาชิกทุกคนต้องใช้
+
+- Git commit เดียวกัน
+- `config/settings.json` เดียวกัน
+- `config/cases.csv` เดียวกัน
+- Prompt เดียวกัน
+- Model เดียวกัน
+
+ถ้าจำเป็นต้องแก้ Configuration หลังเริ่มทดลองแล้ว
+ควรรัน Case ที่ต้องการนำมาเปรียบเทียบใหม่ทั้งหมดภายใต้ Configuration ใหม่
+
 # SQA Defects4J Benchmark
 
 โปรเจกต์เปรียบเทียบการสร้าง Unit Test 4 วิธี
