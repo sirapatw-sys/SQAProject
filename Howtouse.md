@@ -66,12 +66,12 @@ nano .env
 
 ตัวอย่าง:
 
-D4J_ROOT=/home/USERNAME/defects4j
-LOCAL_UID=1000
-LOCAL_GID=1000
+D4J_ROOT=/home/*Your USERNAME*/defects4j
+LOCAL_UID=xxxx
+LOCAL_GID=xxxx
 
-GPT_API_KEY=
-GEMINI_API_KEY=
+GPT_API_KEY=your open api key(https://platform.openai.com/api-keys?utm_source=chatgpt.com)
+GEMINI_API_KEY=your google api key(https://aistudio.google.com/apikey?utm_source=chatgpt.com)
 
 ดู UID/GID ด้วย:
 
