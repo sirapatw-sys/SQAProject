@@ -1,27 +1,8 @@
-## ⚠️ สำคัญ: ห้ามเปลี่ยน Configuration ระหว่างการทดลอง
-Path file ที่แนะนำ: /home/ชื่อผู้ใช้/SQAProject
+# SQA Defects4J Benchmark — วิธีใช้งานสั้น ๆ
 
-ผลการทดลองแต่ละ Run จะมี `experiment_id` เพื่อระบุว่าใช้
-Code, Configuration, Prompt และเงื่อนไขการทดลองชุดใด
+## ⚠️ สำคัญมาก
 
-ถ้ามีการเปลี่ยน เช่น
-
-- `config/settings.json`
-- Model ของ GPT / Gemini
-- Seed
-- Search Budget
-- จำนวน Repetition
-- จำนวน Target Methods
-- Prompt
-- Logic ของ Hill Climbing / AVM
-- Logic การ Generate หรือ Evaluate Test
-
-`experiment_id` อาจเปลี่ยน
-
-ผลที่มี `experiment_id` ต่างกัน **จะไม่สามารถนำมารวมด้วย `analyze.py`
-เป็นการทดลองเดียวกันได้** เพราะเงื่อนไขการทดลองไม่เหมือนกัน
-
-ดังนั้นก่อนเริ่ม Final Benchmark สมาชิกทุกคนต้องใช้
+ก่อนเริ่ม Final Benchmark ทุกคนต้องใช้
 
 - Git commit เดียวกัน
 - `config/settings.json` เดียวกัน
@@ -29,34 +10,25 @@ Code, Configuration, Prompt และเงื่อนไขการทดล�
 - Prompt เดียวกัน
 - Model เดียวกัน
 
-ถ้าจำเป็นต้องแก้ Configuration หลังเริ่มทดลองแล้ว
-ควรรัน Case ที่ต้องการนำมาเปรียบเทียบใหม่ทั้งหมดภายใต้ Configuration ใหม่
+ห้ามแก้ Code หรือ Configuration ระหว่างรัน เพราะ `experiment_id` จะเปลี่ยนและรวมผลกันไม่ได้
 
-# SQA Defects4J Benchmark
+เปลี่ยนได้เฉพาะ `.env` ของแต่ละเครื่อง เช่น
 
-โปรเจกต์เปรียบเทียบการสร้าง Unit Test 4 วิธี
-
-- Hill Climbing
-- AVM
-- GPT
-- Gemini
-
-ผลที่เก็บ:
-- จำนวน Test Case
-- Valid Test Rate
-- Line / Branch / Instruction Coverage
-- Fault Detection
-- Generation / Evaluation Time
-- Coverage per Test
-
----
-
-## 1. Clone โปรเจกต์
-
-```bash
+```env
+D4J_ROOT=/home/USERNAME/defects4j
+LOCAL_UID=1000
+LOCAL_GID=1000
+GPT_API_KEY=YOUR_KKU_API_KEY
+GEMINI_API_KEY=YOUR_KKU_API_KEY
+1. Clone โปรเจกต์
+cd ~
 git clone https://github.com/sirapatw-sys/SQAProject.git
 cd SQAProject
-2. ติดตั้ง Python dependency
+
+แนะนำ Path:
+
+/home/USERNAME/SQAProject
+2. ติดตั้ง Dependencies
 sudo apt update
 sudo apt install -y python3-pip
 python3 -m pip install -r requirements.txt
@@ -64,81 +36,86 @@ python3 -m pip install -r requirements.txt
 cp .env.example .env
 nano .env
 
-ตัวอย่าง:
-
-D4J_ROOT=/home/*Your USERNAME*/defects4j
-LOCAL_UID=xxxx
-LOCAL_GID=xxxx
-
-GPT_API_KEY=your open api key(https://platform.openai.com/api-keys?utm_source=chatgpt.com)
-GEMINI_API_KEY=your google api key(https://aistudio.google.com/apikey?utm_source=chatgpt.com)
-
-ดู UID/GID ด้วย:
+ดู UID/GID:
 
 id -u
 id -g
 
-ห้าม push .env ขึ้น GitHub
+ห้าม Push .env ขึ้น GitHub
 
-4. Build Docker ครั้งแรก
+4. Build Docker และตรวจระบบ
 docker compose --env-file .env -f docker/compose.yaml build worker
 docker compose --env-file .env -f docker/compose.yaml up -d worker
-
-เช็ก environment:
-
 python3 d4j.py check
 
-ถ้าไม่มี error ถือว่าพร้อม
+ถ้าไม่มี Error สำคัญ ถือว่าพร้อม
 
-วิธีรัน Bug ที่ต้องการ
-
-รูปแบบ:
-
-## แบ่งงาน 3 คน
-
+5. แบ่งงาน 3 คน
 Member 1
-
-python3 run.py --case-range 1-285 \
+python3 run.py \
+  --case-range 1-285 \
   --methods hill_climbing avm gpt gemini \
   --worker member1
-
 Member 2
-
-python3 run.py --case-range 286-570 \
+python3 run.py \
+  --case-range 286-570 \
   --methods hill_climbing avm gpt gemini \
   --worker member2
-
 Member 3
-
-python3 run.py --case-range 571-854 \
+python3 run.py \
+  --case-range 571-854 \
   --methods hill_climbing avm gpt gemini \
   --worker member3
+6. ถ้า Quota หมด / เน็ตหลุด / เครื่องดับ
 
-ถ้าเครื่องดับหรือ quota หมด ให้รันคำสั่งเดิมอีกครั้ง ระบบจะทำต่อจากที่ค้าง
+ให้รัน คำสั่งเดิม อีกครั้ง
 
-รันคำสั่งเดิมอีกครั้งได้เลย
+ระบบจะ Skip งานที่ completed แล้ว และทำต่อเฉพาะงานที่ยังไม่เสร็จ
 
-ระบบจะ skip งานที่เสร็จแล้วและทำต่อเฉพาะงานที่ยังไม่เสร็จ
+ต้องใช้ --worker ชื่อเดิม
 
-ดูผล
+ห้ามใส่:
+
+--force
+7. ก่อนเริ่มรันทุกครั้ง
+git pull
+python3 d4j.py check
+
+เช็กว่ามี Benchmark รันอยู่หรือไม่:
+
+ps aux | grep 'python3 run.py' | grep -v grep
+
+ถ้ามีอยู่แล้ว อย่ารันซ้อน
+
+8. ดูผล
+
+หลังรันเสร็จ:
+
 python3 analyze.py
 
-ดูสรุป:
+สรุปผล:
 
 cat results/summary/summary_by_method.csv
 
-ผลละเอียด:
+ผลทั้งหมด:
 
 cat results/summary/all_results.csv
 
-Generated Tests อยู่ที่:
+Generated Tests:
 
 generated_tests/<worker>/<project>/<bug>/
-เช็กว่ามี benchmark รันอยู่ไหม
-ps aux | grep 'python3 run.py' | grep -v grep
+Final Config
 
-ถ้ามี process อยู่แล้ว อย่ารันอีกตัวซ้อน
+ใช้
 
-ก่อนเริ่มงานทุกครั้ง
-git pull
-python3 d4j.py check
+HC      = 1 seed
+AVM     = 1 seed
+GPT     = 1 run
+Gemini  = 1 run
+Target Methods = 5
+
+ก่อนเริ่ม Final ให้ทุกคนเช็ก Commit:
+
+git rev-parse HEAD
+
+ค่า Hash ต้องตรงกันทั้ง 3 คน
