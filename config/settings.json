@@ -1,10 +1,8 @@
 {
   "seeds": [
-    101,
-    202,
-    303
+    101
   ],
-  "ai_repetitions": 3,
+  "ai_repetitions": 1,
   "max_methods_per_case": 5,
   "search_max_evaluations": 20,
   "search_restarts": 2,
@@ -16,9 +14,9 @@
   "ai_max_output_tokens": 4096,
   "ai_source_max_chars": 50000,
   "gpt_model": "gpt-5.6-luna",
-  "gpt_base_url": "https://api.openai.com/v1/responses",
-  "gemini_model": "gemini-3.1-flash-lite",
-  "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta",
+  "gpt_base_url": "https://gen.ai.kku.ac.th/api/v1/chat/completions",
+  "gemini_model": "gemini-3.5-flash-lite",
+  "gemini_base_url": "https://gen.ai.kku.ac.th/api/v1/chat/completions",
   "stateful_max_setup_actions": 4,
   "stateful_max_setup_parameters": 2,
   "stateful_max_setup_steps": 2,

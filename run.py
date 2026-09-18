@@ -118,6 +118,138 @@ def case_is_done(worker: str, case: dict[str, str], settings: dict[str, Any], me
     return all(permanent_done(task_path(worker, case, m, run_id)) for m, run_id, _ in task_ids(settings, methods))
 
 
+
+def _find_matching_java_delimiter(text: str, start: int, opening: str, closing: str) -> int:
+    """Find a matching Java delimiter while ignoring strings and comments."""
+    if start < 0 or start >= len(text) or text[start] != opening:
+        return -1
+    depth = 0
+    state = "code"
+    i = start
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if state == "code":
+            if ch == '"':
+                state = "string"
+            elif ch == "'":
+                state = "char"
+            elif ch == "/" and nxt == "/":
+                state = "line_comment"
+                i += 1
+            elif ch == "/" and nxt == "*":
+                state = "block_comment"
+                i += 1
+            elif ch == opening:
+                depth += 1
+            elif ch == closing:
+                depth -= 1
+                if depth == 0:
+                    return i
+        elif state in {"string", "char"}:
+            if ch == "\\":
+                i += 1
+            elif (state == "string" and ch == '"') or (state == "char" and ch == "'"):
+                state = "code"
+        elif state == "line_comment" and ch == "\n":
+            state = "code"
+        elif state == "block_comment" and ch == "*" and nxt == "/":
+            state = "code"
+            i += 1
+        i += 1
+    return -1
+
+
+def compact_source_for_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
+    """
+    Keep only source declarations for the selected target method names.
+    All overloads of a selected name are retained so overloads are never lost.
+    If extraction fails, fall back to the old bounded full source.
+    """
+    source = meta["source_text"]
+    max_chars = int(settings.get("ai_source_max_chars", 50000))
+    selected = meta["eligible_methods"][: int(settings["max_methods_per_case"])]
+
+    names: list[str] = []
+    for method in selected:
+        declaration = str(method.get("declaration", ""))
+        match = re.search(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", declaration)
+        if match and match.group(1) not in names:
+            names.append(match.group(1))
+    if not names:
+        return source[:max_chars]
+
+    ranges: list[tuple[int, int]] = []
+    for name in names:
+        for match in re.finditer(rf"\b{re.escape(name)}\s*\(", source):
+            open_paren = source.find("(", match.start(), match.end())
+            close_paren = _find_matching_java_delimiter(source, open_paren, "(", ")")
+            if close_paren < 0:
+                continue
+
+            # Only accept a declaration. A normal call site does not have a
+            # public/protected modifier since the previous statement/block.
+            start = max(
+                source.rfind(";", 0, match.start()),
+                source.rfind("{", 0, match.start()),
+                source.rfind("}", 0, match.start()),
+            ) + 1
+            prefix = source[start:match.start()]
+            if not re.search(r"\b(?:public|protected)\b", prefix) or "=" in prefix:
+                continue
+
+            next_brace = source.find("{", close_paren + 1)
+            next_semi = source.find(";", close_paren + 1)
+            structural = min(x for x in (next_brace, next_semi) if x >= 0) if (next_brace >= 0 or next_semi >= 0) else -1
+            if structural < 0:
+                continue
+
+            # Reject expressions whose next structural token only appears much
+            # later; method declarations may only have whitespace/throws here.
+            between = source[close_paren + 1:structural]
+            if "=" in between:
+                continue
+
+            if source[structural] == ";":
+                end = structural + 1
+            else:
+                end = _find_matching_java_delimiter(source, structural, "{", "}")
+                if end < 0:
+                    continue
+                end += 1
+            ranges.append((start, end))
+
+    if not ranges:
+        return source[:max_chars]
+
+    ranges = sorted(set(ranges))
+    package_imports = "\n".join(
+        line for line in source.splitlines()
+        if line.strip().startswith("package ") or line.strip().startswith("import ")
+    )
+    pieces = [
+        "// Compact source: selected target methods (including overloads).",
+        "// Public API sections elsewhere in this prompt list callable setup methods.",
+    ]
+    if package_imports:
+        pieces.extend(["", package_imports])
+
+    remaining = max_chars - len("\n".join(pieces))
+    per_method = max(1000, min(8000, remaining // max(1, len(ranges))))
+    marker = "\n// ... method source truncated for token budget ..."
+    for index, (start, end) in enumerate(ranges, 1):
+        label = f"// ---- selected method source {index} ----"
+        snippet = source[start:end].strip()
+        allowance = min(per_method, max_chars - len("\n".join(pieces)) - len(label) - 3)
+        if allowance <= 0:
+            break
+        if len(snippet) > allowance:
+            body_allowance = max(0, allowance - len(marker))
+            snippet = snippet[:body_allowance] + marker
+        pieces.extend(["", label, snippet])
+
+    return "\n".join(pieces)
+
 def build_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
     template = (ROOT / "prompts/unit_test_prompt.txt").read_text(encoding="utf-8")
     return template.format(
@@ -132,7 +264,7 @@ def build_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
             f"- {m['declaration']} descriptor={m['descriptor']}"
             for m in meta["eligible_methods"][: int(settings["max_methods_per_case"])]
         ) or "- none",
-        source=meta["source_text"][: int(settings.get("ai_source_max_chars", 50000))],
+        source=compact_source_for_prompt(meta, settings),
     )
 
 
