@@ -205,7 +205,12 @@ def parse_method_descriptor(desc: str) -> tuple[list[str], str]:
 
 def javap(project: str, bug_id: int, version: str, class_name: str, cp_test: str) -> str:
     cws = container_workspace(project, bug_id, version)
-    cmd = f'cd "{cws}" && javap -public -s -classpath "{cp_test}" {class_name}'
+    cmd = (
+        f"cd {shlex.quote(cws)} && "
+        f"javap -public -s "
+        f"-classpath {shlex.quote(cp_test)} "
+        f"{shlex.quote(class_name)}"
+    )
     return docker_exec(cmd, timeout=120).stdout
 
 
