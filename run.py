@@ -160,113 +160,371 @@ def _find_matching_java_delimiter(text: str, start: int, opening: str, closing: 
     return -1
 
 
+def _java_import_context(source: str, snippets: list[str], max_imports: int = 20) -> str:
+    """Keep the package line and only imports referenced by the selected snippets."""
+    package_line = ""
+    imports: list[str] = []
+    joined = "\n".join(snippets)
+
+    for raw in source.splitlines():
+        line = raw.strip()
+        if line.startswith("package ") and not package_line:
+            package_line = line
+            continue
+        if not line.startswith("import "):
+            continue
+
+        imported = line.removeprefix("import ").removeprefix("static ").rstrip(";").strip()
+        tail = imported.rsplit(".", 1)[-1]
+        # Wildcard imports are too broad to prove relevant; omit them. The public
+        # API and fully-qualified class names elsewhere in the prompt remain available.
+        if tail == "*":
+            continue
+        if re.search(rf"\b{re.escape(tail)}\b", joined):
+            imports.append(line)
+            if len(imports) >= max_imports:
+                break
+
+    lines = [x for x in [package_line, *imports] if x]
+    return "\n".join(lines)
+
+
+def _has_top_level_equals_java(text: str) -> bool:
+    """True for '=' outside (), [], strings and comments (e.g. a field assignment)."""
+    state = "code"
+    paren = 0
+    bracket = 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if state == "code":
+            if ch == '"':
+                state = "string"
+            elif ch == "'":
+                state = "char"
+            elif ch == "/" and nxt == "/":
+                state = "line_comment"
+                i += 1
+            elif ch == "/" and nxt == "*":
+                state = "block_comment"
+                i += 1
+            elif ch == "(":
+                paren += 1
+            elif ch == ")" and paren:
+                paren -= 1
+            elif ch == "[":
+                bracket += 1
+            elif ch == "]" and bracket:
+                bracket -= 1
+            elif ch == "=" and paren == 0 and bracket == 0:
+                prev = text[i - 1] if i else ""
+                if nxt != "=" and prev not in {"=", "!", "<", ">"}:
+                    return True
+        elif state in {"string", "char"}:
+            if ch == "\\":
+                i += 1
+            elif (state == "string" and ch == '"') or (state == "char" and ch == "'"):
+                state = "code"
+        elif state == "line_comment" and ch == "\n":
+            state = "code"
+        elif state == "block_comment" and ch == "*" and nxt == "/":
+            state = "code"
+            i += 1
+        i += 1
+    return False
+
+
+def _count_java_parameters(parameter_text: str) -> int:
+    """Count top-level Java parameters while ignoring generics and annotations."""
+    if not parameter_text.strip():
+        return 0
+    angle = paren = bracket = brace = 0
+    state = "code"
+    commas = 0
+    i = 0
+    while i < len(parameter_text):
+        ch = parameter_text[i]
+        nxt = parameter_text[i + 1] if i + 1 < len(parameter_text) else ""
+        if state == "code":
+            if ch == '"':
+                state = "string"
+            elif ch == "'":
+                state = "char"
+            elif ch == "/" and nxt == "/":
+                state = "line_comment"
+                i += 1
+            elif ch == "/" and nxt == "*":
+                state = "block_comment"
+                i += 1
+            elif ch == "<":
+                angle += 1
+            elif ch == ">" and angle:
+                angle -= 1
+            elif ch == "(":
+                paren += 1
+            elif ch == ")" and paren:
+                paren -= 1
+            elif ch == "[":
+                bracket += 1
+            elif ch == "]" and bracket:
+                bracket -= 1
+            elif ch == "{":
+                brace += 1
+            elif ch == "}" and brace:
+                brace -= 1
+            elif ch == "," and angle == paren == bracket == brace == 0:
+                commas += 1
+        elif state in {"string", "char"}:
+            if ch == "\\":
+                i += 1
+            elif (state == "string" and ch == '"') or (state == "char" and ch == "'"):
+                state = "code"
+        elif state == "line_comment" and ch == "\n":
+            state = "code"
+        elif state == "block_comment" and ch == "*" and nxt == "/":
+            state = "code"
+            i += 1
+        i += 1
+    return commas + 1
+
+
+def _truncate_source_snippet(snippet: str, allowance: int) -> str:
+    if len(snippet) <= allowance:
+        return snippet
+    marker = "\n// ... middle omitted to reduce prompt tokens ...\n"
+    if allowance <= len(marker) + 200:
+        return snippet[:allowance]
+    # Preserve the declaration/start and the end (often return/closing logic).
+    head = int((allowance - len(marker)) * 0.72)
+    tail = allowance - len(marker) - head
+    return snippet[:head] + marker + snippet[-tail:]
+
+
 def compact_source_for_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
     """
-    Keep only source declarations for the selected target method names.
-    All overloads of a selected name are retained so overloads are never lost.
-    If extraction fails, fall back to the old bounded full source.
+    Send only source for the selected target methods instead of the whole class.
+    All overloads of a selected method name are retained, but the total source
+    context is capped so large classes cannot dominate the daily KKU token quota.
     """
     source = meta["source_text"]
-    max_chars = int(settings.get("ai_source_max_chars", 50000))
+    configured_max = int(settings.get("ai_source_max_chars", 50000))
+    # 14k characters is normally ~3-4k tokens before the other prompt sections.
+    # The existing setting remains a hard upper bound if it is configured lower.
+    source_budget = min(max(0, configured_max), 14000)
+    if source_budget == 0:
+        return ""
     selected = meta["eligible_methods"][: int(settings["max_methods_per_case"])]
 
-    names: list[str] = []
+    selected_arities: dict[str, set[int]] = {}
     for method in selected:
-        declaration = str(method.get("declaration", ""))
-        match = re.search(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", declaration)
-        if match and match.group(1) not in names:
-            names.append(match.group(1))
-    if not names:
-        return source[:max_chars]
+        name = str(method.get("name", "")).strip()
+        if not name:
+            declaration = str(method.get("declaration", ""))
+            match = re.search(r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\(", declaration)
+            name = match.group(1) if match else ""
+        if not name:
+            continue
+
+        params = method.get("parameter_types")
+        if isinstance(params, list):
+            arity = len(params)
+        else:
+            declaration = str(method.get("declaration", ""))
+            m = re.search(r"\((.*)\)", declaration)
+            arity = _count_java_parameters(m.group(1)) if m else 0
+        selected_arities.setdefault(name, set()).add(arity)
+
+    if not selected_arities:
+        return source[:source_budget]
 
     ranges: list[tuple[int, int]] = []
-    for name in names:
+    for name, allowed_arities in selected_arities.items():
         for match in re.finditer(rf"\b{re.escape(name)}\s*\(", source):
             open_paren = source.find("(", match.start(), match.end())
             close_paren = _find_matching_java_delimiter(source, open_paren, "(", ")")
             if close_paren < 0:
                 continue
 
-            # Only accept a declaration. A normal call site does not have a
-            # public/protected modifier since the previous statement/block.
-            start = max(
+            parameter_text = source[open_paren + 1:close_paren]
+            if _count_java_parameters(parameter_text) not in allowed_arities:
+                continue
+
+            # A declaration must have public/protected since the preceding Java
+            # statement/block boundary. This rejects ordinary call sites.
+            decl_start = max(
                 source.rfind(";", 0, match.start()),
                 source.rfind("{", 0, match.start()),
                 source.rfind("}", 0, match.start()),
             ) + 1
-            prefix = source[start:match.start()]
-            if not re.search(r"\b(?:public|protected)\b", prefix) or "=" in prefix:
+            prefix = source[decl_start:match.start()]
+            if not re.search(r"\b(?:public|protected)\b", prefix) or _has_top_level_equals_java(prefix):
                 continue
 
             next_brace = source.find("{", close_paren + 1)
             next_semi = source.find(";", close_paren + 1)
-            structural = min(x for x in (next_brace, next_semi) if x >= 0) if (next_brace >= 0 or next_semi >= 0) else -1
-            if structural < 0:
+            structural_candidates = [x for x in (next_brace, next_semi) if x >= 0]
+            if not structural_candidates:
                 continue
-
-            # Reject expressions whose next structural token only appears much
-            # later; method declarations may only have whitespace/throws here.
+            structural = min(structural_candidates)
             between = source[close_paren + 1:structural]
             if "=" in between:
                 continue
 
             if source[structural] == ";":
-                end = structural + 1
+                body_end = structural + 1
             else:
-                end = _find_matching_java_delimiter(source, structural, "{", "}")
-                if end < 0:
+                close_brace = _find_matching_java_delimiter(source, structural, "{", "}")
+                if close_brace < 0:
                     continue
-                end += 1
-            ranges.append((start, end))
+                body_end = close_brace + 1
+
+            ranges.append((decl_start, body_end))
 
     if not ranges:
-        return source[:max_chars]
+        return source[:source_budget]
 
     ranges = sorted(set(ranges))
-    package_imports = "\n".join(
-        line for line in source.splitlines()
-        if line.strip().startswith("package ") or line.strip().startswith("import ")
-    )
-    pieces = [
-        "// Compact source: selected target methods (including overloads).",
-        "// Public API sections elsewhere in this prompt list callable setup methods.",
+    raw_snippets = [source[a:b].strip() for a, b in ranges]
+    context = _java_import_context(source, raw_snippets)
+
+    header = [
+        "// Selected production methods only; unrelated class source omitted.",
     ]
-    if package_imports:
-        pieces.extend(["", package_imports])
+    if context:
+        header.extend([context])
 
-    remaining = max_chars - len("\n".join(pieces))
-    per_method = max(1000, min(8000, remaining // max(1, len(ranges))))
-    marker = "\n// ... method source truncated for token budget ..."
-    for index, (start, end) in enumerate(ranges, 1):
-        label = f"// ---- selected method source {index} ----"
-        snippet = source[start:end].strip()
-        allowance = min(per_method, max_chars - len("\n".join(pieces)) - len(label) - 3)
-        if allowance <= 0:
-            break
-        if len(snippet) > allowance:
-            body_allowance = max(0, allowance - len(marker))
-            snippet = snippet[:body_allowance] + marker
-        pieces.extend(["", label, snippet])
+    fixed_chars = len("\n".join(header)) + 100 * len(raw_snippets)
+    available = max(1000, source_budget - fixed_chars)
+    per_snippet = max(1000, min(3200, available // max(1, len(raw_snippets))))
 
-    return "\n".join(pieces)
+    pieces = list(header)
+    for index, snippet in enumerate(raw_snippets, 1):
+        rendered = _truncate_source_snippet(snippet, per_snippet)
+        pieces.extend(["", f"// ---- target method source {index} ----", rendered])
+
+    result = "\n".join(pieces)
+    return result[:source_budget]
+
+
+def _javap_entries(javap_text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Return class declaration and (declaration, descriptor) entries from javap -public -s."""
+    class_decl = ""
+    entries: list[tuple[str, str]] = []
+    pending: str | None = None
+
+    for raw in javap_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(("public ", "protected ")) and (
+            " class " in f" {line} " or " interface " in f" {line} "
+        ):
+            class_decl = line
+            continue
+        if line.startswith(("public ", "protected ")) and "(" in line and line.endswith(";"):
+            pending = line
+            continue
+        if pending and line.startswith("descriptor:"):
+            entries.append((pending, line))
+            pending = None
+
+    return class_decl, entries
+
+
+def compact_javap_for_prompt(
+    javap_text: str,
+    class_name: str,
+    keep_signatures: set[tuple[str, str]],
+    *,
+    include_factories: bool,
+) -> str:
+    """Keep constructors, exact selected/setup signatures, and a few useful factories."""
+    class_decl, entries = _javap_entries(javap_text)
+    simple = class_name.rsplit(".", 1)[-1]
+    kept: list[tuple[str, str]] = []
+    factories = 0
+
+    for declaration, descriptor in entries:
+        before = declaration.split("(", 1)[0].strip()
+        declared_name = before.split()[-1]
+        short_name = declared_name.rsplit(".", 1)[-1]
+        descriptor_value = descriptor.split(":", 1)[1].strip() if ":" in descriptor else descriptor.strip()
+        is_constructor = short_name == simple
+        is_requested = (short_name, descriptor_value) in keep_signatures
+        # Useful when the concrete class cannot simply be instantiated.
+        is_factory = (
+            include_factories
+            and " static " in f" {declaration} "
+            and class_name in declaration
+            and factories < 4
+        )
+
+        if is_constructor or is_requested or is_factory:
+            kept.append((declaration, descriptor))
+            if is_factory:
+                factories += 1
+
+    lines = [class_decl or f"class {class_name}"]
+    for declaration, descriptor in kept:
+        lines.extend([declaration, descriptor])
+
+    if len(lines) == 1:
+        lines.append("// No additional relevant public API entries found.")
+    return "\n".join(lines)
+
+
+def compact_api_for_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str]:
+    selected = meta["eligible_methods"][: int(settings["max_methods_per_case"])]
+    target_signatures = {
+        (str(m.get("name", "")).strip(), str(m.get("descriptor", "")).strip())
+        for m in selected
+        if m.get("name") and m.get("descriptor")
+    }
+    setup_signatures = {
+        (str(action.get("name", "")).strip(), str(action.get("descriptor", "")).strip())
+        for action in meta.get("setup_actions", [])
+        if action.get("name") and action.get("descriptor")
+    }
+
+    target_api = compact_javap_for_prompt(
+        meta["public_api_text"],
+        meta["target_class"],
+        target_signatures | setup_signatures,
+        include_factories=False,
+    )
+
+    if meta["concrete_class"] == meta["target_class"]:
+        concrete_api = "(same class as TARGET CLASS; duplicate API omitted)"
+    else:
+        concrete_api = compact_javap_for_prompt(
+            meta.get("concrete_api_text", ""),
+            meta["concrete_class"],
+            setup_signatures,
+            include_factories=True,
+        )
+
+    return target_api, concrete_api
+
 
 def build_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
     template = (ROOT / "prompts/unit_test_prompt.txt").read_text(encoding="utf-8")
+    public_api, concrete_api = compact_api_for_prompt(meta, settings)
     return template.format(
         project=meta["project"],
         bug_id=meta["bug_id"],
         target_class=meta["target_class"],
         concrete_class=meta["concrete_class"],
         prompt_version=settings["prompt_version"],
-        public_api=meta["public_api_text"],
-        concrete_api=meta.get("concrete_api_text", meta["public_api_text"]),
+        public_api=public_api,
+        concrete_api=concrete_api,
         selected_methods="\n".join(
             f"- {m['declaration']} descriptor={m['descriptor']}"
             for m in meta["eligible_methods"][: int(settings["max_methods_per_case"])]
         ) or "- none",
         source=compact_source_for_prompt(meta, settings),
     )
-
 
 def generated_dir(worker: str, case: dict[str, str], method: str, run_id: str) -> Path:
     path = ROOT / "generated_tests" / worker / case["project"] / str(case["bug_id"]) / method / run_id
@@ -375,6 +633,8 @@ def run_ai(worker: str, case: dict[str, str], meta: dict[str, Any], method: str,
     total_start = time.perf_counter()
     generation_start = time.perf_counter()
     prompt = build_prompt(meta, settings)
+    record["prompt_chars"] = len(prompt)
+    record["target_method_count"] = min(len(meta.get("eligible_methods", [])), int(settings["max_methods_per_case"]))
     out_dir = generated_dir(worker, case, method, run_id)
     prompt_path = out_dir / "prompt.txt"
     prompt_path.write_text(prompt, encoding="utf-8")

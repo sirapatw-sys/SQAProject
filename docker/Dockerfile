@@ -3,6 +3,12 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Los_Angeles
 
+# Keep Java/Ant source decoding deterministic and UTF-8.
+# C.UTF-8 is available in the Ubuntu base image and avoids the US-ASCII
+# default that breaks older Defects4J projects containing Unicode source text.
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-11-jdk \
     perl \

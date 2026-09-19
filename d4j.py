@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -98,15 +99,50 @@ def container_workspace(project: str, bug_id: int, version: str) -> str:
 
 
 def checkout(project: str, bug_id: int, version: str) -> Path:
+    """
+    Checkout inside the Docker worker, not on the host.
+
+    Some old Defects4J projects write absolute Defects4J dependency paths into
+    their generated build files. A host checkout can therefore embed paths such
+    as /home/<user>/defects4j, which do not exist inside the worker where the
+    project is compiled. Container-side checkout keeps those paths rooted at
+    /opt/defects4j consistently.
+
+    The marker also prevents reusing older host-created workspaces after this
+    fix is introduced.
+    """
+    ensure_worker()
+
     ws = workspace(project, bug_id, version)
-    # Defects4J creates .defects4j.config for a valid checkout.
-    # Do not reuse a half-created directory left by an interrupted checkout.
-    if ws.exists() and (ws / ".defects4j.config").exists():
+    cws = container_workspace(project, bug_id, version)
+    marker = ws / ".sqa_container_checkout"
+
+    if (
+        ws.exists()
+        and (ws / ".defects4j.config").exists()
+        and marker.exists()
+    ):
         return ws
-    ws.parent.mkdir(parents=True, exist_ok=True)
-    if ws.exists():
-        shutil.rmtree(ws)
-    run([defects4j_bin(), "checkout", "-p", project, "-v", f"{bug_id}{version}", "-w", str(ws)], timeout=600)
+
+    q_cws = shlex.quote(cws)
+    q_project = shlex.quote(project)
+    q_version = shlex.quote(f"{bug_id}{version}")
+
+    docker_exec(
+        " && ".join([
+            f"rm -rf {q_cws}",
+            "mkdir -p /workspace/.work",
+            f"defects4j checkout -p {q_project} -v {q_version} -w {q_cws}",
+            f"touch {q_cws}/.sqa_container_checkout",
+        ]),
+        timeout=600,
+    )
+
+    if not (ws / ".defects4j.config").exists():
+        raise RuntimeError(
+            f"Defects4J checkout did not create .defects4j.config: {project}-{bug_id}{version}"
+        )
+
     return ws
 
 
