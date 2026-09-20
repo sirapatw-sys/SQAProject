@@ -46,6 +46,40 @@ public class CandidateRunner {
         System.out.println("ERROR_CLASS=" + t.getClass().getName());
         System.out.println("ERROR_MESSAGE_B64=" + enc(String.valueOf(t.getMessage())));
     }
+    private static boolean isSupportedArray(Object result) {
+    if (result == null || !result.getClass().isArray()) {
+        return false;
+    }
+
+    Class<?> componentType =
+        result.getClass().getComponentType();
+
+    return componentType.isPrimitive();
+}
+
+    private static void emitArray(Object result) {
+        int length = Array.getLength(result);
+        Class<?> componentType =
+            result.getClass().getComponentType();
+
+        System.out.println("RETURN_KIND=ARRAY");
+        System.out.println(
+            "ARRAY_COMPONENT_TYPE=" + componentType.getName()
+        );
+        System.out.println("ARRAY_LENGTH=" + length);
+        System.out.println("RETURN_B64=");
+
+        for (int i = 0; i < length; i++) {
+            Object value = Array.get(result, i);
+
+            System.out.println(
+                "ARRAY_ITEM_"
+                + i
+                + "_B64="
+                + enc(String.valueOf(value))
+            );
+        }
+    }
 
     private static void applySetupStep(Class<?> receiverClass, Object receiver, String stepB64) throws Exception {
         String raw = new String(Base64.getDecoder().decode(stepB64), StandardCharsets.UTF_8);
@@ -230,30 +264,35 @@ public class CandidateRunner {
             "RETURN_TYPE=" + method.getReturnType().getName()
         );
 
-        if (method.getReturnType() == void.class) {
-            System.out.println("RETURN_KIND=VOID");
-            System.out.println("RETURN_B64=");
-        } else if (result == null) {
-            System.out.println("RETURN_KIND=NULL");
-            System.out.println("RETURN_B64=");
-        } else if (
-            result instanceof String
-            || result instanceof Character
-            || result instanceof Number
-            || result instanceof Boolean
-        ) {
-            System.out.println("RETURN_KIND=SCALAR");
-            System.out.println(
-                "RETURN_B64="
-                + enc(String.valueOf(result))
-            );
-        } else {
-            System.out.println("RETURN_KIND=OBJECT");
-            System.out.println(
-                "RETURN_B64="
-                + enc(String.valueOf(result))
-            );
-        }
+       if (method.getReturnType() == void.class) {
+    System.out.println("RETURN_KIND=VOID");
+    System.out.println("RETURN_B64=");
+} else if (result == null) {
+    System.out.println("RETURN_KIND=NULL");
+    System.out.println("RETURN_B64=");
+} else if (result == receiver) {
+    System.out.println("RETURN_KIND=SAME_RECEIVER");
+    System.out.println("RETURN_B64=");
+} else if (isSupportedArray(result)) {
+    emitArray(result);
+} else if (
+    result instanceof String
+    || result instanceof Character
+    || result instanceof Number
+    || result instanceof Boolean
+) {
+    System.out.println("RETURN_KIND=SCALAR");
+    System.out.println(
+        "RETURN_B64="
+        + enc(String.valueOf(result))
+    );
+} else {
+    System.out.println("RETURN_KIND=OBJECT");
+    System.out.println(
+        "RETURN_B64="
+        + enc(String.valueOf(result))
+    );
+}
     } catch (Throwable throwable) {
         emitError(throwable);
         System.exit(2);

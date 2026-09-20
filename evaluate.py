@@ -63,29 +63,126 @@ def encode_setup_step(action: dict[str, Any]) -> str:
 
 def parse_runner_output(text: str) -> dict[str, Any]:
     data: dict[str, str] = {}
+
+    allowed_keys = {
+        "STATUS",
+        "RETURN_TYPE",
+        "RETURN_KIND",
+        "RETURN_B64",
+        "ARRAY_COMPONENT_TYPE",
+        "ARRAY_LENGTH",
+        "EXCEPTION_CLASS",
+        "EXCEPTION_MESSAGE_B64",
+        "ERROR_CLASS",
+        "ERROR_MESSAGE_B64",
+    }
+
     for line in text.splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            if k in {
-                "STATUS", "RETURN_TYPE", "RETURN_KIND", "RETURN_B64",
-                "EXCEPTION_CLASS", "EXCEPTION_MESSAGE_B64", "ERROR_CLASS", "ERROR_MESSAGE_B64"
-            }:
-                data[k] = v
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+
+        if key in allowed_keys or re.fullmatch(
+            r"ARRAY_ITEM_\d+_B64",
+            key,
+        ):
+            data[key] = value
+
     status = data.get("STATUS", "ERROR")
-    out: dict[str, Any] = {"status": status.lower()}
+    out: dict[str, Any] = {
+        "status": status.lower()
+    }
+
     if status == "OK":
-        out["return_type"] = data.get("RETURN_TYPE", "")
-        out["return_kind"] = data.get("RETURN_KIND", "")
+        out["return_type"] = data.get(
+            "RETURN_TYPE",
+            "",
+        )
+        out["return_kind"] = data.get(
+            "RETURN_KIND",
+            "",
+        )
+
         raw = data.get("RETURN_B64", "")
-        out["return_value"] = base64.b64decode(raw).decode("utf-8", errors="replace") if raw else ""
+        out["return_value"] = (
+            base64.b64decode(raw).decode(
+                "utf-8",
+                errors="replace",
+            )
+            if raw
+            else ""
+        )
+
+        if out["return_kind"] == "ARRAY":
+            try:
+                array_length = int(
+                    data.get("ARRAY_LENGTH", "0")
+                )
+            except ValueError:
+                array_length = 0
+
+            array_values = []
+
+            for index in range(array_length):
+                encoded = data.get(
+                    f"ARRAY_ITEM_{index}_B64",
+                    "",
+                )
+
+                array_values.append(
+                    base64.b64decode(encoded).decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                    if encoded
+                    else ""
+                )
+
+            out["array_component_type"] = data.get(
+                "ARRAY_COMPONENT_TYPE",
+                "",
+            )
+            out["array_values"] = array_values
+
     elif status == "EXCEPTION":
-        out["exception_class"] = data.get("EXCEPTION_CLASS", "")
-        raw = data.get("EXCEPTION_MESSAGE_B64", "")
-        out["exception_message"] = base64.b64decode(raw).decode("utf-8", errors="replace") if raw else ""
+        out["exception_class"] = data.get(
+            "EXCEPTION_CLASS",
+            "",
+        )
+
+        raw = data.get(
+            "EXCEPTION_MESSAGE_B64",
+            "",
+        )
+        out["exception_message"] = (
+            base64.b64decode(raw).decode(
+                "utf-8",
+                errors="replace",
+            )
+            if raw
+            else ""
+        )
+
     else:
-        out["error_class"] = data.get("ERROR_CLASS", "")
-        raw = data.get("ERROR_MESSAGE_B64", "")
-        out["error_message"] = base64.b64decode(raw).decode("utf-8", errors="replace") if raw else ""
+        out["error_class"] = data.get(
+            "ERROR_CLASS",
+            "",
+        )
+
+        raw = data.get(
+            "ERROR_MESSAGE_B64",
+            "",
+        )
+        out["error_message"] = (
+            base64.b64decode(raw).decode(
+                "utf-8",
+                errors="replace",
+            )
+            if raw
+            else ""
+        )
+
     return out
 
 
@@ -282,6 +379,61 @@ def scalar_assert(return_type: str, observed: str, expression: str) -> str:
     escaped = java_literal("java.lang.String", observed)
     return f"assertEquals({escaped}, String.valueOf({expression}));"
 
+def array_assert(
+    return_type: str,
+    observed_values: list[str],
+    expression: str,
+) -> str:
+    if not return_type.endswith("[]"):
+        raise ValueError(
+            f"Expected an array return type: {return_type}"
+        )
+
+    component_type = return_type[:-2]
+
+    supported_components = {
+        "byte",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "boolean",
+        "char",
+    }
+
+    if component_type not in supported_components:
+        raise ValueError(
+            "Unsupported array component type: "
+            f"{component_type}"
+        )
+
+    values = ", ".join(
+        java_literal(component_type, value)
+        for value in observed_values
+    )
+
+    expected = (
+        f"new {component_type}[] "
+        f"{{{values}}}"
+    )
+
+    if component_type == "float":
+        return (
+            f"assertArrayEquals("
+            f"{expected}, {expression}, 0.000001f);"
+        )
+
+    if component_type == "double":
+        return (
+            f"assertArrayEquals("
+            f"{expected}, {expression}, 1.0e-9);"
+        )
+
+    return (
+        f"assertArrayEquals("
+        f"{expected}, {expression});"
+    )
 
 def java_source_type(type_name: str) -> str:
     """Convert a JVM binary nested-class name to Java source notation."""
@@ -334,6 +486,12 @@ def setup_java_lines(action: dict[str, Any], receiver: str = "obj") -> list[str]
             raise ValueError(f"Unsupported setup argument: {arg}")
     return [f"    {receiver}.{action['name']}({', '.join(args)});"]
 
+def setup_has_fresh_object_arguments(setup_actions: list[dict[str, Any]],) -> bool:
+    return any(
+        argument.get("kind") == "new"
+        for action in setup_actions
+        for argument in action.get("arguments", [])
+    )
 
 def emit_algorithm_test(meta: dict[str, Any], method_results: list[dict[str, Any]], algorithm: str, run_id: str) -> tuple[str, str]:
     safe_alg = re.sub(r"[^A-Za-z0-9_]", "_", algorithm)
@@ -382,11 +540,42 @@ def emit_algorithm_test(meta: dict[str, Any], method_results: list[dict[str, Any
         if kind == "VOID":
             lines.append(f"    {expression};")
         elif kind == "NULL":
-            lines.append(f"    assertNull({expression});")
+            lines.append(
+                f"    assertNull({expression});"
+            )
+        elif kind == "SAME_RECEIVER":
+            lines.append(
+                f"    assertSame(obj, {expression});"
+            )
+        elif kind == "ARRAY":
+            if setup_has_fresh_object_arguments(
+                setup_actions
+            ):
+                lines.append(
+                    f"    assertNotNull({expression});"
+                )
+            else:
+                lines.append(
+                    "    "
+                    + array_assert(
+                        method["return_type"],
+                        oracle.get("array_values", []),
+                        expression,
+                    )
+                )
         elif kind == "OBJECT":
-            lines.append(f"    assertNotNull({expression});")
+            lines.append(
+                f"    assertNotNull({expression});"
+            )
         elif kind == "SCALAR":
-            lines.append("    " + scalar_assert(method["return_type"], oracle.get("return_value", ""), expression))
+            lines.append(
+                "    "
+                + scalar_assert(
+                    method["return_type"],
+                    oracle.get("return_value", ""),
+                    expression,
+                )
+            )
         else:
             lines.append(f"    {expression};")
         lines.append("  }")
