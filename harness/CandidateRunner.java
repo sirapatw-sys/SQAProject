@@ -81,6 +81,94 @@ public class CandidateRunner {
         }
     }
 
+    private static boolean isSupportedScalarType(Class<?> type) {
+        return (
+            type == boolean.class
+            || type == byte.class
+            || type == short.class
+            || type == int.class
+            || type == long.class
+            || type == float.class
+            || type == double.class
+            || type == char.class
+            || type == Boolean.class
+            || Number.class.isAssignableFrom(type)
+            || type == Character.class
+            || type == String.class
+        );
+    }
+
+    private static boolean emitVoidState(
+        Class<?> receiverClass,
+        Object receiver,
+        String targetMethodName
+    ) {
+        if (
+            !targetMethodName.startsWith("set")
+            || targetMethodName.length() <= 3
+        ) {
+            return false;
+        }
+
+        String suffix = targetMethodName.substring(3);
+        String[] observerNames = {
+            "get" + suffix,
+            "is" + suffix,
+        };
+
+        for (String observerName : observerNames) {
+            try {
+                Method observer = receiverClass.getMethod(
+                    observerName
+                );
+
+                if (
+                    Modifier.isStatic(observer.getModifiers())
+                    || observer.getParameterCount() != 0
+                    || !isSupportedScalarType(
+                        observer.getReturnType()
+                    )
+                ) {
+                    continue;
+                }
+
+                Object first = observer.invoke(receiver);
+                Object second = observer.invoke(receiver);
+
+                if (!java.util.Objects.equals(first, second)) {
+                    continue;
+                }
+
+                System.out.println("RETURN_KIND=VOID_STATE");
+                System.out.println("RETURN_B64=");
+                System.out.println(
+                    "STATE_METHOD=" + observerName
+                );
+                System.out.println(
+                    "STATE_RETURN_TYPE="
+                    + observer.getReturnType().getName()
+                );
+
+                if (first == null) {
+                    System.out.println("STATE_KIND=NULL");
+                    System.out.println("STATE_VALUE_B64=");
+                } else {
+                    System.out.println("STATE_KIND=SCALAR");
+                    System.out.println(
+                        "STATE_VALUE_B64="
+                        + enc(String.valueOf(first))
+                    );
+                }
+
+                return true;
+            } catch (ReflectiveOperationException exception) {
+                // This naming candidate is not a usable stable observer.
+            }
+        }
+
+        return false;
+    }
+
     private static void applySetupStep(Class<?> receiverClass, Object receiver, String stepB64) throws Exception {
         String raw = new String(Base64.getDecoder().decode(stepB64), StandardCharsets.UTF_8);
         String[] fields = raw.split("\\t", -1);
@@ -265,8 +353,10 @@ public class CandidateRunner {
         );
 
        if (method.getReturnType() == void.class) {
-    System.out.println("RETURN_KIND=VOID");
-    System.out.println("RETURN_B64=");
+    if (!emitVoidState(clazz, receiver, methodName)) {
+        System.out.println("RETURN_KIND=VOID");
+        System.out.println("RETURN_B64=");
+    }
 } else if (result == null) {
     System.out.println("RETURN_KIND=NULL");
     System.out.println("RETURN_B64=");

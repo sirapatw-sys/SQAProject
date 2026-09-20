@@ -71,6 +71,10 @@ def parse_runner_output(text: str) -> dict[str, Any]:
         "RETURN_B64",
         "ARRAY_COMPONENT_TYPE",
         "ARRAY_LENGTH",
+        "STATE_METHOD",
+        "STATE_RETURN_TYPE",
+        "STATE_KIND",
+        "STATE_VALUE_B64",
         "EXCEPTION_CLASS",
         "EXCEPTION_MESSAGE_B64",
         "ERROR_CLASS",
@@ -144,6 +148,33 @@ def parse_runner_output(text: str) -> dict[str, Any]:
                 "",
             )
             out["array_values"] = array_values
+
+        if out["return_kind"] == "VOID_STATE":
+            out["state_method"] = data.get(
+                "STATE_METHOD",
+                "",
+            )
+            out["state_return_type"] = data.get(
+                "STATE_RETURN_TYPE",
+                "",
+            )
+            out["state_kind"] = data.get(
+                "STATE_KIND",
+                "",
+            )
+
+            state_raw = data.get(
+                "STATE_VALUE_B64",
+                "",
+            )
+            out["state_value"] = (
+                base64.b64decode(state_raw).decode(
+                    "utf-8",
+                    errors="replace",
+                )
+                if state_raw
+                else ""
+            )
 
     elif status == "EXCEPTION":
         out["exception_class"] = data.get(
@@ -539,6 +570,25 @@ def emit_algorithm_test(meta: dict[str, Any], method_results: list[dict[str, Any
         kind = oracle.get("return_kind")
         if kind == "VOID":
             lines.append(f"    {expression};")
+        elif kind == "VOID_STATE":
+            lines.append(f"    {expression};")
+            state_expression = (
+                f"obj.{oracle['state_method']}()"
+            )
+
+            if oracle.get("state_kind") == "NULL":
+                lines.append(
+                    f"    assertNull({state_expression});"
+                )
+            else:
+                lines.append(
+                    "    "
+                    + scalar_assert(
+                        oracle["state_return_type"],
+                        oracle.get("state_value", ""),
+                        state_expression,
+                    )
+                )
         elif kind == "NULL":
             lines.append(
                 f"    assertNull({expression});"

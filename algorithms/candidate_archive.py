@@ -34,6 +34,16 @@ def oracle_signature(
             tuple(oracle.get("array_values", [])),
         )
 
+    if kind == "VOID_STATE":
+        return (
+            "ok",
+            kind,
+            oracle.get("state_method", ""),
+            oracle.get("state_return_type", ""),
+            oracle.get("state_kind", ""),
+            oracle.get("state_value", ""),
+        )
+
     return (
         "ok",
         kind,
