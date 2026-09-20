@@ -1,5 +1,7 @@
 from __future__ import annotations
-
+from algorithms.candidate_archive import (
+    select_candidate_archive,
+)
 import random
 import time
 from typing import Any
@@ -52,7 +54,14 @@ def neighbor(values: list[Any], types: list[str], rng: random.Random) -> list[An
     return out
 
 
-def search_method(meta: dict[str, Any], method: dict[str, Any], seed: int, max_evals: int, restarts: int) -> dict[str, Any] | None:
+def search_method(
+    meta: dict[str, Any],
+    method: dict[str, Any],
+    seed: int,
+    max_evals: int,
+    restarts: int,
+    max_candidates: int,
+) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     types = method["parameter_types"]
     setup_sequences = meta.get("setup_sequences") or [[]]
@@ -111,19 +120,16 @@ def search_method(meta: dict[str, Any], method: dict[str, Any], seed: int, max_e
             else:
                 stagnation += 1
 
-    if best_eval is None or best_values is None or best_setup is None:
-        return None
-    return {
-        "method": method,
-        "values": best_values,
-        "setup_actions": setup_sequences[best_setup],
-        "oracle": best_eval["oracle"],
-        "fitness": best_eval["fitness"],
-        "search_coverage": best_eval.get("coverage"),
-        "evaluations": evaluations,
-        "unique_candidates": len(cache),
-        "search_seconds": time.perf_counter() - start,
-    }
+    if best_eval is None:
+        return []
+
+    return select_candidate_archive(
+        method=method,
+        setup_sequences=setup_sequences,
+        cache=cache,
+        limit=max_candidates,
+        search_seconds=time.perf_counter() - start,
+    )
 
 
 def generate(meta: dict[str, Any], seed: int, settings: dict[str, Any]) -> dict[str, Any]:
@@ -138,9 +144,15 @@ def generate(meta: dict[str, Any], seed: int, settings: dict[str, Any]) -> dict[
                 seed + index * 1009,
                 int(settings["search_max_evaluations"]),
                 int(settings["search_restarts"]),
+                int(
+                    settings.get(
+                        "search_candidates_per_method",
+                        1,
+                    )
+                ),
             )
             if found:
-                results.append(found)
+                results.extend(found)
             else:
                 errors.append({"method": method["name"], "error": "no_valid_candidate"})
         except Exception as exc:
