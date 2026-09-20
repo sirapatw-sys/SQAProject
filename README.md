@@ -12,7 +12,7 @@ The project is intentionally small enough for a 3-person student team to underst
 ## Core files
 
 ```text
-run.py                  main runner, sharding, checkpoint/resume
+run.py                  main runner, case partitioning, checkpoint/resume
 d4j.py                  Defects4J checkout/compile/API discovery
 evaluate.py             candidate fitness + JUnit evaluation + JaCoCo
 analyze.py              merge all members' JSON results into CSV
@@ -55,7 +55,11 @@ target_selection_source = defects4j_classes.modified
 
 That is a **target-aware** benchmark configuration. If your report requires a stricter no-bug-location protocol, freeze a target-selection policy before the final experiment and fill `target_class` explicitly instead of using the fallback.
 
-`concrete_class` is only needed when the target cannot be instantiated with a public no-argument constructor. This is manual configuration by design; the project avoids a large automatic constructor/resolution framework. Algorithm runs are marked `unsupported` immediately when the configured concrete class is abstract/non-public or lacks a public no-argument constructor, instead of wasting the search budget on impossible candidates.
+`concrete_class` is only needed when the target class itself is not a suitable receiver. This is manual configuration by design; the project avoids a large automatic constructor or dependency-resolution framework.
+
+For HC/AVM, the configured receiver must be a public, non-abstract concrete class. The runner supports both public no-argument constructors and simple public parameterized constructors whose parameters are primitive types, `String`, or `Comparable`. Constructor selection is deterministic: the constructor with the fewest parameters is selected, with its JVM descriptor used as a tie-breaker. Numeric arguments use `0`, `boolean` uses `false`, `char` uses `a`, and `String`/`Comparable` uses `sqa`.
+
+Classes that require streams, files, collections, interfaces, arbitrary object graphs, non-public constructors, or unsupported constructor argument types remain outside the automatic search domain. Such algorithm runs are marked `unsupported` instead of consuming the search budget on receivers that the current implementation cannot construct.
 
 ## 1. Setup
 
@@ -110,7 +114,7 @@ Columns:
 
 - `project`, `bug_id`: Defects4J case.
 - `target_class`: optional explicit target. Blank uses the configured fallback.
-- `concrete_class`: optional concrete class with a public no-arg constructor.
+- `concrete_class`: optional public concrete receiver class. It may use a public no-argument constructor or a supported public parameterized constructor.
 - `method`: optional. Leave blank to test up to `max_methods_per_case` eligible public methods.
 - `enabled`: `true` or `false`.
 
@@ -138,31 +142,42 @@ python3 run.py --project Chart --bug 1 --methods hill_climbing avm
 python3 run.py --project Chart --bug 1 --methods gpt gemini
 ```
 
-## 4. Split across 3 people
+## 4. Split the 854 cases across 3 people
 
 Every member should use the **same Git commit**, `config/cases.csv`, and `config/settings.json`.
+
+The enabled cases are sorted deterministically by `(project, bug_id)` and then divided into three non-overlapping, contiguous ranges. Case ranges are 1-based and inclusive.
 
 Member 1:
 
 ```bash
-python3 run.py --all --shard 1/3 --worker member1
+python3 run.py \
+  --case-range 1-285 \
+  --methods hill_climbing avm gpt gemini \
+  --worker member1
 ```
 
 Member 2:
 
 ```bash
-python3 run.py --all --shard 2/3 --worker member2
+python3 run.py \
+  --case-range 286-570 \
+  --methods hill_climbing avm gpt gemini \
+  --worker member2
 ```
 
 Member 3:
 
 ```bash
-python3 run.py --all --shard 3/3 --worker member3
+python3 run.py \
+  --case-range 571-854 \
+  --methods hill_climbing avm gpt gemini \
+  --worker member3
 ```
 
-Cases are sorted by `(project, bug_id)` and assigned deterministically by index modulo 3. Each assigned bug runs all four methods on the same worker machine.
+Each assigned bug runs all four methods on the same worker machine. Use only the assigned `--case-range` command so every case is executed exactly once.
 
-This is preferable to assigning one algorithm per person, because HC/AVM/GPT/Gemini for a bug then share the same local environment.
+Running all four methods for every assigned bug is preferable to assigning one algorithm per person, because HC/AVM/GPT/Gemini for a bug then share the same local environment.
 
 ## 5. Checkpoint and resume
 
@@ -250,7 +265,7 @@ The algorithmic generators intentionally support a manageable student-project se
 
 - public target methods
 - primitive and `String` target arguments
-- public no-argument construction for the configured concrete receiver
+- public no-argument or supported public parameterized construction for the configured concrete receiver
 - a **small bounded stateful setup sequence** before the target call
 - setup actions are public instance `void` methods with at most the configured number of parameters
 - setup arguments may use primitive/String defaults or an exact public helper class with a public no-arg constructor
@@ -276,7 +291,7 @@ Before launching hundreds of bugs:
 3. Run GPT/Gemini once each and confirm API configuration.
 4. Run 5–10 bugs with --limit.
 5. Freeze Git commit + settings + cases.csv.
-6. Start the three shards.
+6. Start the three assigned case ranges.
 7. Merge and analyze after all workers finish.
 ```
 
