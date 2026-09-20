@@ -544,6 +544,7 @@ def common_record(worker: str, case: dict[str, str], method: str, run_id: str, m
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "target_class": meta["target_class"],
         "concrete_class": meta["concrete_class"],
+        "receiver_constructor": meta.get("receiver_constructor"),
         "target_selection_source": meta["target_selection_source"],
     }
 
@@ -554,7 +555,11 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
     if not meta.get("concrete_instantiable", True):
         record.update({
             "status": "unsupported",
-            "error": "Configured concrete_class is abstract/non-public or has no public no-arg constructor; fill concrete_class in config/cases.csv",
+            "error": (
+    "Configured concrete_class is abstract/non-public "
+    "or has no supported public constructor whose "
+    "arguments are primitive/String/Comparable"
+),
             "test_case_count": 0,
         })
         return record

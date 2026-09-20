@@ -30,6 +30,7 @@ public class CandidateRunner {
             case "boolean": return Boolean.valueOf(value);
             case "char": return value.isEmpty() ? Character.valueOf('\0') : Character.valueOf(value.charAt(0));
             case "java.lang.String": return value;
+            case "java.lang.Comparable": return value;
             default:
                 if ("__NULL__".equals(value)) return null;
                 throw new IllegalArgumentException("Unsupported argument type: " + type);
@@ -81,68 +82,181 @@ public class CandidateRunner {
     }
 
     public static void main(String[] args) {
-        try {
-            if (args.length < 4) {
-                throw new IllegalArgumentException(
-                    "Usage: <class> <method> <typesCsv> <setupCount> [setupStepB64...] [valuesB64...]"
-                );
-            }
-            String className = args[0];
-            String methodName = args[1];
-            String typesCsv = args[2];
-            String[] typeNames = typesCsv.isEmpty() ? new String[0] : typesCsv.split(",", -1);
-            int setupCount = Integer.parseInt(args[3]);
-            if (setupCount < 0) throw new IllegalArgumentException("setupCount must be >= 0");
-            if (args.length != 4 + setupCount + typeNames.length) {
-                throw new IllegalArgumentException("Argument count mismatch");
-            }
-
-            Class<?> clazz = Class.forName(className);
-            Constructor<?> ctor = clazz.getConstructor();
-            Object receiver = ctor.newInstance();
-
-            for (int i = 0; i < setupCount; i++) {
-                applySetupStep(clazz, receiver, args[4 + i]);
-            }
-
-            Class<?>[] parameterTypes = new Class<?>[typeNames.length];
-            Object[] values = new Object[typeNames.length];
-            int valueOffset = 4 + setupCount;
-            for (int i = 0; i < typeNames.length; i++) {
-                parameterTypes[i] = typeOf(typeNames[i]);
-                values[i] = parse(typeNames[i], args[valueOffset + i]);
-            }
-
-            Method method = clazz.getMethod(methodName, parameterTypes);
-            Object result;
-            try {
-                result = method.invoke(receiver, values);
-            } catch (InvocationTargetException e) {
-                Throwable cause = e.getCause() == null ? e : e.getCause();
-                System.out.println("STATUS=EXCEPTION");
-                System.out.println("EXCEPTION_CLASS=" + cause.getClass().getName());
-                System.out.println("EXCEPTION_MESSAGE_B64=" + enc(String.valueOf(cause.getMessage())));
-                return;
-            }
-
-            System.out.println("STATUS=OK");
-            System.out.println("RETURN_TYPE=" + method.getReturnType().getName());
-            if (method.getReturnType() == void.class) {
-                System.out.println("RETURN_KIND=VOID");
-                System.out.println("RETURN_B64=");
-            } else if (result == null) {
-                System.out.println("RETURN_KIND=NULL");
-                System.out.println("RETURN_B64=");
-            } else if (result instanceof String || result instanceof Character || result instanceof Number || result instanceof Boolean) {
-                System.out.println("RETURN_KIND=SCALAR");
-                System.out.println("RETURN_B64=" + enc(String.valueOf(result)));
-            } else {
-                System.out.println("RETURN_KIND=OBJECT");
-                System.out.println("RETURN_B64=" + enc(String.valueOf(result)));
-            }
-        } catch (Throwable t) {
-            emitError(t);
-            System.exit(2);
+    try {
+        if (args.length < 6) {
+            throw new IllegalArgumentException(
+                "Usage: <class> <ctorTypesCsv> <ctorCount> "
+                + "<method> <methodTypesCsv> <setupCount> "
+                + "[ctorValuesB64...] [setupStepB64...] "
+                + "[methodValuesB64...]"
+            );
         }
+
+        String className = args[0];
+
+        String constructorTypesCsv = args[1];
+        String[] constructorTypeNames =
+            constructorTypesCsv.isEmpty()
+                ? new String[0]
+                : constructorTypesCsv.split(",", -1);
+
+        int constructorCount = Integer.parseInt(args[2]);
+
+        if (
+            constructorCount < 0
+            || constructorCount != constructorTypeNames.length
+        ) {
+            throw new IllegalArgumentException(
+                "Constructor argument count mismatch"
+            );
+        }
+
+        String methodName = args[3];
+
+        String methodTypesCsv = args[4];
+        String[] methodTypeNames =
+            methodTypesCsv.isEmpty()
+                ? new String[0]
+                : methodTypesCsv.split(",", -1);
+
+        int setupCount = Integer.parseInt(args[5]);
+
+        if (setupCount < 0) {
+            throw new IllegalArgumentException(
+                "setupCount must be >= 0"
+            );
+        }
+
+        int expectedArgs =
+            6
+            + constructorCount
+            + setupCount
+            + methodTypeNames.length;
+
+        if (args.length != expectedArgs) {
+            throw new IllegalArgumentException(
+                "Argument count mismatch: expected "
+                + expectedArgs
+                + " but got "
+                + args.length
+            );
+        }
+
+        Class<?> clazz = Class.forName(className);
+
+        Class<?>[] constructorParameterTypes =
+            new Class<?>[constructorCount];
+
+        Object[] constructorValues =
+            new Object[constructorCount];
+
+        int constructorValueOffset = 6;
+
+        for (int i = 0; i < constructorCount; i++) {
+            constructorParameterTypes[i] =
+                typeOf(constructorTypeNames[i]);
+
+            constructorValues[i] = parse(
+                constructorTypeNames[i],
+                args[constructorValueOffset + i]
+            );
+        }
+
+        Constructor<?> constructor =
+            clazz.getConstructor(constructorParameterTypes);
+
+        Object receiver =
+            constructor.newInstance(constructorValues);
+
+        int setupOffset =
+            constructorValueOffset + constructorCount;
+
+        for (int i = 0; i < setupCount; i++) {
+            applySetupStep(
+                clazz,
+                receiver,
+                args[setupOffset + i]
+            );
+        }
+
+        Class<?>[] methodParameterTypes =
+            new Class<?>[methodTypeNames.length];
+
+        Object[] methodValues =
+            new Object[methodTypeNames.length];
+
+        int methodValueOffset =
+            setupOffset + setupCount;
+
+        for (int i = 0; i < methodTypeNames.length; i++) {
+            methodParameterTypes[i] =
+                typeOf(methodTypeNames[i]);
+
+            methodValues[i] = parse(
+                methodTypeNames[i],
+                args[methodValueOffset + i]
+            );
+        }
+
+        Method method = clazz.getMethod(
+            methodName,
+            methodParameterTypes
+        );
+
+        Object result;
+
+        try {
+            result = method.invoke(receiver, methodValues);
+        } catch (InvocationTargetException exception) {
+            Throwable cause =
+                exception.getCause() == null
+                    ? exception
+                    : exception.getCause();
+
+            System.out.println("STATUS=EXCEPTION");
+            System.out.println(
+                "EXCEPTION_CLASS="
+                + cause.getClass().getName()
+            );
+            System.out.println(
+                "EXCEPTION_MESSAGE_B64="
+                + enc(String.valueOf(cause.getMessage()))
+            );
+            return;
+        }
+
+        System.out.println("STATUS=OK");
+        System.out.println(
+            "RETURN_TYPE=" + method.getReturnType().getName()
+        );
+
+        if (method.getReturnType() == void.class) {
+            System.out.println("RETURN_KIND=VOID");
+            System.out.println("RETURN_B64=");
+        } else if (result == null) {
+            System.out.println("RETURN_KIND=NULL");
+            System.out.println("RETURN_B64=");
+        } else if (
+            result instanceof String
+            || result instanceof Character
+            || result instanceof Number
+            || result instanceof Boolean
+        ) {
+            System.out.println("RETURN_KIND=SCALAR");
+            System.out.println(
+                "RETURN_B64="
+                + enc(String.valueOf(result))
+            );
+        } else {
+            System.out.println("RETURN_KIND=OBJECT");
+            System.out.println(
+                "RETURN_B64="
+                + enc(String.valueOf(result))
+            );
+        }
+    } catch (Throwable throwable) {
+        emitError(throwable);
+        System.exit(2);
     }
+}
 }

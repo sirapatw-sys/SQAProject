@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parent
 TMP = ROOT / "results/tmp"
 AGENT = "/workspace/tools/jacoco/jacocoagent.jar"
 CLI = "/workspace/tools/jacoco/jacococli.jar"
+JUNIT4_CP = (
+    "/opt/defects4j/framework/projects/lib/"
+    "junit-4.12-hamcrest-1.3.jar"
+)
 JACOCO_URL = "https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.13/org.jacoco.cli-0.8.13-nodeps.jar"
 JACOCO_AGENT_URL = "https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.13/org.jacoco.agent-0.8.13-runtime.jar"
 _JACOCO_READY = False
@@ -137,10 +141,40 @@ def search_candidate(
     ws = meta["fixed_workspace"]
     bin_classes = resolve_bin(ws, meta["fixed_bin_classes"])
     types = method["parameter_types"]
-    setup_specs = [encode_setup_step(action) for action in setup_actions]
+
+    constructor = meta.get("receiver_constructor") or {
+        "parameter_types": [],
+        "values": [],
+    }
+
+    constructor_types = list(
+        constructor.get("parameter_types", [])
+    )
+
+    constructor_values = list(
+        constructor.get("values", [])
+    )
+
+    if len(constructor_types) != len(constructor_values):
+        raise ValueError(
+            "Receiver constructor type/value count mismatch"
+        )
+
+    setup_specs = [
+        encode_setup_step(action)
+        for action in setup_actions
+    ]
+
     runner_args = [
-        meta["concrete_class"], method["name"], ",".join(types), str(len(setup_specs)),
-        *setup_specs, *[b64(v) for v in values],
+        meta["concrete_class"],
+        ",".join(constructor_types),
+        str(len(constructor_types)),
+        method["name"],
+        ",".join(types),
+        str(len(setup_specs)),
+        *[b64(value) for value in constructor_values],
+        *setup_specs,
+        *[b64(value) for value in values],
     ]
     quoted_args = " ".join(shlex.quote(x) for x in runner_args)
     command = (
@@ -218,6 +252,15 @@ def java_literal(type_name: str, value: Any) -> str:
         return "'" + _escape_java(ch, "'") + "'"
     if type_name == "java.lang.String":
         return '"' + _escape_java(str(value), '"') + '"'
+
+    if type_name == "java.lang.Comparable":
+        string_literal = (
+            '"'
+            + _escape_java(str(value), '"')
+            + '"'
+        )
+        return f"(java.lang.Comparable){string_literal}"
+
     return "null"
 
 
@@ -244,6 +287,41 @@ def java_source_type(type_name: str) -> str:
     """Convert a JVM binary nested-class name to Java source notation."""
     return type_name.replace("$", ".")
 
+def receiver_java_line(meta: dict[str, Any]) -> str:
+    constructor = meta.get("receiver_constructor") or {
+        "parameter_types": [],
+        "values": [],
+    }
+
+    parameter_types = list(
+        constructor.get("parameter_types", [])
+    )
+
+    values = list(
+        constructor.get("values", [])
+    )
+
+    if len(parameter_types) != len(values):
+        raise ValueError(
+            "Receiver constructor type/value count mismatch"
+        )
+
+    arguments = ", ".join(
+        java_literal(type_name, value)
+        for type_name, value in zip(
+            parameter_types,
+            values,
+        )
+    )
+
+    class_name = java_source_type(
+        meta["concrete_class"]
+    )
+
+    return (
+        f"    {class_name} obj = "
+        f"new {class_name}({arguments});"
+    )
 
 def setup_java_lines(action: dict[str, Any], receiver: str = "obj") -> list[str]:
     args: list[str] = []
@@ -282,7 +360,7 @@ def emit_algorithm_test(meta: dict[str, Any], method_results: list[dict[str, Any
             expected_class = java_literal("java.lang.String", oracle["exception_class"])
             lines.append("  @Test")
             lines.append(f"  public void {test_name}() throws Exception {{")
-            lines.append(f"    {java_source_type(meta['concrete_class'])} obj = new {java_source_type(meta['concrete_class'])}();")
+            lines.append(receiver_java_line(meta))
             for action in setup_actions:
                 lines.extend(setup_java_lines(action))
             lines.append("    Throwable caught = null;")
@@ -297,7 +375,7 @@ def emit_algorithm_test(meta: dict[str, Any], method_results: list[dict[str, Any
             continue
         lines.append("  @Test")
         lines.append(f"  public void {test_name}() throws Exception {{")
-        lines.append(f"    {java_source_type(meta['concrete_class'])} obj = new {java_source_type(meta['concrete_class'])}();")
+        lines.append(receiver_java_line(meta))
         for action in setup_actions:
             lines.extend(setup_java_lines(action))
         kind = oracle.get("return_kind")
@@ -349,7 +427,10 @@ def qualified_class_name_from_java(code: str) -> str:
 
 
 def _compile_and_run(meta: dict[str, Any], source_container: str, class_name: str, version: str, with_coverage: bool) -> dict[str, Any]:
-    cp = meta["fixed_cp_test"] if version == "f" else meta["buggy_cp_test"]
+    project_cp = (meta["fixed_cp_test"] if version == "f" else meta["buggy_cp_test"])
+    # Generated tests use JUnit 4 even when the Defects4J project itself uses
+    # JUnit 3. Put JUnit 4 first so org.junit.Test and Assert resolve correctly.
+    cp = f"{JUNIT4_CP}:{project_cp}"
     ws = meta["fixed_workspace"] if version == "f" else meta["buggy_workspace"]
     bin_classes = meta["fixed_bin_classes"] if version == "f" else meta["buggy_bin_classes"]
     token = hashlib.sha1(f"{source_container}:{version}:{time.time_ns()}".encode()).hexdigest()[:12]
