@@ -251,7 +251,7 @@ def parse_public_api(javap_text: str, class_name: str) -> tuple[list[dict[str, A
             })
             pending = None
     return methods, class_decl
-#fix unsupported constructor types
+
 def parse_public_constructors(
     javap_text: str,
     class_name: str,
@@ -349,7 +349,7 @@ def default_setup_value(type_name: str) -> Any:
     if type_name == "java.lang.String":
         return ""
     return None
-#here
+
 def default_constructor_value(type_name: str) -> Any:
     """Return a deterministic value for a supported receiver constructor."""
     if type_name == "boolean":
@@ -372,7 +372,7 @@ def default_constructor_value(type_name: str) -> Any:
     raise ValueError(
         f"Unsupported constructor parameter type: {type_name}"
     )
-#And here
+
 def choose_receiver_constructor(
     javap_text: str,
     class_name: str,
@@ -564,15 +564,14 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
     concrete_api_text = api_text if concrete_class == target_class else javap(project, bug_id, "f", concrete_class, fixed_cp)
     concrete_methods, concrete_decl = parse_public_api(concrete_api_text, concrete_class)
 
-    #concrete_instantiable = public_noarg_instantiable(concrete_api_text, concrete_class, concrete_decl)
-#**********************************************
+
     receiver_constructor = choose_receiver_constructor(
     concrete_api_text,
     concrete_class,
     concrete_decl,
 )
     concrete_instantiable = receiver_constructor is not None
-#*************************************************
+
     settings = load_settings()
     setup_actions = build_setup_actions(project, bug_id, fixed_cp, methods, concrete_methods, settings)
     setup_sequences = build_setup_sequences(setup_actions, settings)

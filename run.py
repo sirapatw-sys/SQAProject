@@ -579,7 +579,8 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
     if not generated["method_results"]:
         record.update({
             "status": "unsupported",
-            "error": "No valid candidates. Check concrete_class/no-arg constructor or supported methods.",
+            "error": "No valid candidates were found with the selected receiver "
+            "constructor, setup sequence, and supported target methods.",
             "test_case_count": 0,
             "generation_time_sec": time.perf_counter() - generation_start,
             "evaluation_time_sec": 0.0,
