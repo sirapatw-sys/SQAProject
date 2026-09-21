@@ -64,7 +64,7 @@ def experiment_id() -> str:
         return _EXPERIMENT_ID
     files = [
         "run.py", "d4j.py", "evaluate.py",
-        "algorithms/hill_climbing.py", "algorithms/avm.py",
+        "algorithms/hill_climbing.py", "algorithms/avm.py","algorithms/candidate_archive.py",
         "ai/gpt.py", "ai/gemini.py", "harness/CandidateRunner.java",
         "docker/Dockerfile", "docker/compose.yaml", "requirements.txt",
         "config/settings.json", "config/cases.csv", "prompts/unit_test_prompt.txt",
