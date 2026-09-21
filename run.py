@@ -64,7 +64,7 @@ def experiment_id() -> str:
         return _EXPERIMENT_ID
     files = [
         "run.py", "d4j.py", "evaluate.py",
-        "algorithms/hill_climbing.py", "algorithms/avm.py",
+        "algorithms/hill_climbing.py", "algorithms/avm.py","algorithms/candidate_archive.py",
         "ai/gpt.py", "ai/gemini.py", "harness/CandidateRunner.java",
         "docker/Dockerfile", "docker/compose.yaml", "requirements.txt",
         "config/settings.json", "config/cases.csv", "prompts/unit_test_prompt.txt",
@@ -544,6 +544,7 @@ def common_record(worker: str, case: dict[str, str], method: str, run_id: str, m
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "target_class": meta["target_class"],
         "concrete_class": meta["concrete_class"],
+        "receiver_constructor": meta.get("receiver_constructor"),
         "target_selection_source": meta["target_selection_source"],
     }
 
@@ -554,7 +555,11 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
     if not meta.get("concrete_instantiable", True):
         record.update({
             "status": "unsupported",
-            "error": "Configured concrete_class is abstract/non-public or has no public no-arg constructor; fill concrete_class in config/cases.csv",
+            "error": (
+    "Configured concrete_class is abstract/non-public "
+    "or has no supported public constructor whose "
+    "arguments are primitive/String/Comparable"
+),
             "test_case_count": 0,
         })
         return record
@@ -574,7 +579,8 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
     if not generated["method_results"]:
         record.update({
             "status": "unsupported",
-            "error": "No valid candidates. Check concrete_class/no-arg constructor or supported methods.",
+            "error": "No valid candidates were found with the selected receiver "
+            "constructor, setup sequence, and supported target methods.",
             "test_case_count": 0,
             "generation_time_sec": time.perf_counter() - generation_start,
             "evaluation_time_sec": 0.0,

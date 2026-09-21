@@ -9,8 +9,8 @@
 
 ## Repetition
 
-- HC/AVM: seeds defined in `config/settings.json` (default 101, 202, 303).
-- GPT/Gemini: independent repetitions defined by `ai_repetitions` (default 3).
+- HC/AVM: seeds are defined in `config/settings.json`.
+- GPT/Gemini: independent repetitions are defined by `ai_repetitions` in `config/settings.json`.
 
 ## Common evaluation
 
@@ -29,14 +29,19 @@ Final coverage is measured on the fixed revision using JaCoCo instruction, branc
 - No patch, diff, issue description, trigger test, or known failing developer test is supplied to a generator.
 - The default fallback is target-aware at class level (`classes.modified`); no patch/line-level location is supplied. This must be disclosed in the report.
 - Same case configuration and evaluator are used across all four methods.
-- Each bug's four methods run on the same worker shard.
+- The 854 sorted cases are divided into the fixed, non-overlapping ranges `1-285`, `286-570`, and `571-854`.
+- Each bug's four methods run on the same worker responsible for its assigned case range.
 - Git commit and worker ID are stored with every task result.
 
 ## Known simplification
 
-The search algorithms operate on public target methods with primitive/String target arguments and a public no-argument concrete receiver. They also allow a small bounded stateful setup sequence before the target call. Setup actions are discovered only from public APIs and may use primitive/String default values or exact helper classes that themselves have public no-argument constructors.
+The search algorithms operate on public target methods whose arguments are primitive values or `String`. The configured receiver must be a public, non-abstract concrete class. A receiver may use either a public no-argument constructor or a supported public parameterized constructor whose arguments are primitive values, `String`, or `Comparable`.
 
-This is intentionally not a general object-graph generator: interfaces/abstract helper parameters, constructor dependency graphs, and deep arbitrary state construction can still be unsupported. Cases outside this domain may be marked unsupported or need a manually configured `concrete_class`.
+Receiver construction is deterministic. The implementation selects the supported public constructor with the fewest parameters and uses its JVM descriptor as a tie-breaker. Numeric constructor arguments use `0`, `boolean` uses `false`, `char` uses `a`, and `String`/`Comparable` uses `sqa`. These constructor values are fixed receiver setup values and are not currently search variables.
+
+The algorithms also allow a small bounded stateful setup sequence before the target call. Setup actions are discovered only from public APIs and may use primitive/String default values or exact helper classes that themselves have public no-argument constructors.
+
+This is intentionally not a general object-graph generator. Non-public or abstract receiver classes, interfaces, constructors requiring streams/files/collections or other unsupported object types, interface/abstract helper parameters, constructor dependency graphs, and deep arbitrary state construction can remain unsupported. Cases outside this domain may be marked `unsupported` or require a manually configured `concrete_class`.
 
 If `target_class` is blank, the software can use Defects4J `classes.modified` as a target-aware fallback. This must be disclosed in the report; use an explicitly frozen target policy if the course requires a no-bug-location benchmark.
 

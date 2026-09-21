@@ -5,6 +5,7 @@
   "ai_repetitions": 1,
   "max_methods_per_case": 5,
   "search_max_evaluations": 20,
+  "search_candidates_per_method": 3,
   "search_restarts": 2,
   "candidate_timeout_sec": 30,
   "test_timeout_sec": 120,
