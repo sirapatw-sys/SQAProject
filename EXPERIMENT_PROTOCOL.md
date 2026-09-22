@@ -33,15 +33,15 @@ Final coverage is measured on the fixed revision using JaCoCo instruction, branc
 - Each bug's four methods run on the same worker responsible for its assigned case range.
 - Git commit and worker ID are stored with every task result.
 
-## Known simplification
+## Bounded construction and runtime domain
 
-The search algorithms operate on public target methods whose arguments are primitive values or `String`. The configured receiver must be a public, non-abstract concrete class. A receiver may use either a public no-argument constructor or a supported public parameterized constructor whose arguments are primitive values, `String`, or `Comparable`.
+The search algorithms operate on public target methods whose arguments are primitive values or `String`. Receiver creation uses a deterministic, recursive construction plan supporting public constructors, exact-type public factories, public singleton/default fields, primitive/boxed/String values, enums, empty arrays, common collections, lightweight stream/reader/writer implementations, and bounded discovery of concrete project subtypes. Setup helper arguments can use the same plans.
 
-Receiver construction is deterministic. The implementation selects the supported public constructor with the fewest parameters and uses its JVM descriptor as a tie-breaker. Numeric constructor arguments use `0`, `boolean` uses `false`, `char` uses `a`, and `String`/`Comparable` uses `sqa`. These constructor values are fixed receiver setup values and are not currently search variables.
+Construction parameters are structural fixed values and are not HC/AVM search variables. This prevents dependency graphs from multiplying the behavioral search space. Constructor/factory candidates are ranked by recursive construction cost with stable descriptor/name tie-breakers.
 
-The algorithms also allow a small bounded stateful setup sequence before the target call. Setup actions are discovered only from public APIs and may use primitive/String default values or exact helper classes that themselves have public no-argument constructors.
+Planning has cycle detection, memoized type inspection, maximum depth, maximum inspected types, candidate caps, and a planning timeout. Non-public classes, unresolved domain interfaces/abstract classes, private APIs, builders, and graphs outside these limits can remain unsupported. Reflection access bypass and `Unsafe.allocateInstance` are intentionally not used.
 
-This is intentionally not a general object-graph generator. Non-public or abstract receiver classes, interfaces, constructors requiring streams/files/collections or other unsupported object types, interface/abstract helper parameters, constructor dependency graphs, and deep arbitrary state construction can remain unsupported. Cases outside this domain may be marked `unsupported` or require a manually configured `concrete_class`.
+The default post-preparation budget for each HC/AVM task is 180 seconds: at most 110 seconds of search, a 10-second candidate timeout, and a 60-second final-evaluation reserve. Progress output is flushed throughout the search. Defects4J checkout/compile and first-time Docker/tool setup are preparation costs and are not included in this algorithm budget.
 
 If `target_class` is blank, the software can use Defects4J `classes.modified` as a target-aware fallback. This must be disclosed in the report; use an explicitly frozen target policy if the course requires a no-bug-location benchmark.
 

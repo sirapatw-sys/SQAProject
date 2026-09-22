@@ -545,6 +545,8 @@ def common_record(worker: str, case: dict[str, str], method: str, run_id: str, m
         "target_class": meta["target_class"],
         "concrete_class": meta["concrete_class"],
         "receiver_constructor": meta.get("receiver_constructor"),
+        "construction_plan": meta.get("construction_plan"),
+        "construction_diagnostics": meta.get("construction_diagnostics"),
         "target_selection_source": meta["target_selection_source"],
     }
 
@@ -556,10 +558,9 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
         record.update({
             "status": "unsupported",
             "error": (
-    "Configured concrete_class is abstract/non-public "
-    "or has no supported public constructor whose "
-    "arguments are primitive/String/Comparable"
-),
+                "Construction planner could not build the configured concrete_class "
+                "within its public-API depth/type/time limits"
+            ),
             "test_case_count": 0,
         })
         return record
@@ -572,9 +573,18 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
         return record
 
     total_start = time.perf_counter()
+    deadline = time.monotonic() + max(
+        1.0, float(settings.get("algorithm_case_time_budget_sec", 180))
+    )
     generation_start = time.perf_counter()
     generator = hill_climbing.generate if method == "hill_climbing" else avm.generate
-    generated = generator(meta, seed, settings)
+    effective_settings = dict(settings)
+    reserve = max(1.0, float(settings.get("final_evaluation_reserve_sec", 60)))
+    effective_settings["search_case_time_budget_sec"] = min(
+        float(settings.get("search_case_time_budget_sec", 110)),
+        max(1.0, float(settings.get("algorithm_case_time_budget_sec", 180)) - reserve),
+    )
+    generated = generator(meta, seed, effective_settings)
     record["search"] = generated
     if not generated["method_results"]:
         record.update({
@@ -607,7 +617,11 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
 
     evaluation_start = time.perf_counter()
     try:
-        evaluation = evaluate.evaluate_test(meta, java_path)
+        print(
+            f"    [{method}] final evaluation remaining={max(0.0, deadline - time.monotonic()):.1f}s",
+            flush=True,
+        )
+        evaluation = evaluate.evaluate_test(meta, java_path, deadline=deadline)
     except Exception as exc:
         record.update({
             "status": "error",
@@ -770,6 +784,8 @@ def select_cases(args: argparse.Namespace) -> list[dict[str, str]]:
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     load_dotenv()
     ap = argparse.ArgumentParser(description="Simple resumable Defects4J benchmark runner")
     ap.add_argument("--project")

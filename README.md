@@ -55,11 +55,11 @@ target_selection_source = defects4j_classes.modified
 
 That is a **target-aware** benchmark configuration. If your report requires a stricter no-bug-location protocol, freeze a target-selection policy before the final experiment and fill `target_class` explicitly instead of using the fallback.
 
-`concrete_class` is only needed when the target class itself is not a suitable receiver. This is manual configuration by design; the project avoids a large automatic constructor or dependency-resolution framework.
+`concrete_class` remains an optional manual override. HC/AVM now run a bounded construction planner first. It recursively resolves public constructors, exact-type public static factories, singleton/default public static fields, primitives and boxed values, strings, enums, empty arrays, common collection interfaces, lightweight stream/reader/writer implementations, and a capped batch scan for concrete project subtypes of abstract/interface receivers. The chosen construction graph is deterministic and is recorded as `construction_plan` in metadata/results.
 
-For HC/AVM, the configured receiver must be a public, non-abstract concrete class. The runner supports both public no-argument constructors and simple public parameterized constructors whose parameters are primitive types, `String`, or `Comparable`. Constructor selection is deterministic: the constructor with the fewest parameters is selected, with its JVM descriptor used as a tie-breaker. Numeric arguments use `0`, `boolean` uses `false`, `char` uses `a`, and `String`/`Comparable` uses `sqa`.
+Construction is deliberately separate from HC/AVM input search. Constructor dependencies are fixed structural values; only supported target-method inputs and bounded setup choices enter the search space. Cycles, non-public classes, unresolved abstract/domain interfaces, and graphs that exceed the configured depth/type/time limits remain `unsupported` instead of causing unbounded exploration.
 
-Classes that require streams, files, collections, interfaces, arbitrary object graphs, non-public constructors, or unsupported constructor argument types remain outside the automatic search domain. Such algorithm runs are marked `unsupported` instead of consuming the search budget on receivers that the current implementation cannot construct.
+Runtime controls in `config/settings.json` cap planning, candidate execution, total search, and the complete algorithm run. The default algorithm budget is 180 seconds, with 110 seconds for search and 60 seconds reserved for final fixed/buggy evaluation. This budget starts after Defects4J checkout/compile preparation; a cold Docker checkout is infrastructure time and is reported separately by the console flow. Progress is line-buffered and printed during candidate evaluation.
 
 ## 1. Setup
 
@@ -114,7 +114,7 @@ Columns:
 
 - `project`, `bug_id`: Defects4J case.
 - `target_class`: optional explicit target. Blank uses the configured fallback.
-- `concrete_class`: optional public concrete receiver class. It may use a public no-argument constructor or a supported public parameterized constructor.
+- `concrete_class`: optional public receiver override. Its construction graph must be resolvable within the configured planner limits.
 - `method`: optional. Leave blank to test up to `max_methods_per_case` eligible public methods.
 - `enabled`: `true` or `false`.
 

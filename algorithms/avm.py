@@ -70,6 +70,9 @@ def search_method(
     seed: int,
     max_evals: int,
     max_candidates: int,
+    deadline: float | None = None,
+    progress_label: str = "avm",
+    progress_every: int = 5,
 ) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     parameter_types = method["parameter_types"]
@@ -90,6 +93,9 @@ def search_method(
     evaluations = 0
     start = time.perf_counter()
 
+    def has_time() -> bool:
+        return deadline is None or time.monotonic() < deadline
+
     def score(
         setup_index: int,
         values: list[Any],
@@ -102,13 +108,33 @@ def search_method(
         )
 
         if key not in cache:
-            cache[key] = evaluate.search_candidate(
-                meta,
-                method,
-                values,
-                setup_sequences[setup_index],
+            if not has_time():
+                return {"ok": False, "budget_exhausted": True, "fitness": -1.0}
+            remaining = None if deadline is None else max(1.0, deadline - time.monotonic())
+            timeout = None if remaining is None else min(
+                float(evaluate.d4j.load_settings()["candidate_timeout_sec"]),
+                remaining,
             )
+            try:
+                cache[key] = evaluate.search_candidate(
+                    meta,
+                    method,
+                    values,
+                    setup_sequences[setup_index],
+                    timeout=timeout,
+                )
+            except Exception as exception:
+                cache[key] = {
+                    "ok": False,
+                    "fitness": -1.0,
+                    "error": f"candidate_evaluation: {exception}",
+                }
             evaluations += 1
+            if evaluations == 1 or evaluations % max(1, progress_every) == 0:
+                print(
+                    f"    [{progress_label}] {method['name']} evaluations={evaluations}/{max_evals} elapsed={time.perf_counter() - start:.1f}s",
+                    flush=True,
+                )
 
         return cache[key]
 
@@ -127,7 +153,7 @@ def search_method(
     for setup_index in range(
         len(setup_sequences)
     ):
-        if evaluations >= max_evals:
+        if evaluations >= max_evals or not has_time():
             break
 
         evaluation = score(
@@ -179,11 +205,11 @@ def search_method(
 
     changed = True
 
-    while evaluations < max_evals and changed:
+    while evaluations < max_evals and changed and has_time():
         changed = False
 
         for index in variable_order:
-            if evaluations >= max_evals:
+            if evaluations >= max_evals or not has_time():
                 break
 
             type_name = parameter_types[index]
@@ -211,7 +237,7 @@ def search_method(
                 local_values = list(current)
 
                 for value in candidates:
-                    if evaluations >= max_evals:
+                    if evaluations >= max_evals or not has_time():
                         break
 
                     candidate_values = list(current)
@@ -337,6 +363,7 @@ def search_method(
                 while (
                     direction
                     and evaluations < max_evals
+                    and has_time()
                 ):
                     candidate_values = list(current)
                     candidate_values[index] = clamp(
@@ -397,6 +424,10 @@ def generate(
 
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    deadline = time.monotonic() + max(
+        1.0, float(settings.get("search_case_time_budget_sec", 110))
+    )
+    progress_every = max(1, int(settings.get("progress_every_evaluations", 5)))
 
     max_candidates = int(
         settings.get(
@@ -406,6 +437,10 @@ def generate(
     )
 
     for index, method in enumerate(methods):
+        if time.monotonic() >= deadline:
+            errors.append({"method": method["name"], "error": "case_search_time_budget_exhausted"})
+            break
+        found: list[dict[str, Any]] = []
         try:
             found = search_method(
                 meta=meta,
@@ -417,6 +452,9 @@ def generate(
                     ]
                 ),
                 max_candidates=max_candidates,
+                deadline=deadline,
+                progress_label="avm",
+                progress_every=progress_every,
             )
 
             if found:
@@ -433,7 +471,13 @@ def generate(
                 "error": str(exception),
             })
 
+        print(
+            f"    [avm] method={method['name']} candidates={len(found)} remaining={max(0.0, deadline - time.monotonic()):.1f}s",
+            flush=True,
+        )
+
     return {
         "method_results": results,
         "errors": errors,
+        "time_budget_exhausted": time.monotonic() >= deadline,
     }

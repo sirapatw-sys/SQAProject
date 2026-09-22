@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from construction import ConstructionPlanner, PlannerLimits
+
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / ".work"
 RESULTS = ROOT / "results"
@@ -215,6 +217,132 @@ def javap(project: str, bug_id: int, version: str, class_name: str, cp_test: str
         f"{shlex.quote(class_name)}"
     )
     return docker_exec(cmd, timeout=120).stdout
+
+
+def parse_public_static_fields(javap_text: str) -> list[dict[str, str]]:
+    """Extract simple public static fields for singleton/default strategies."""
+    fields: list[dict[str, str]] = []
+    for raw in javap_text.splitlines():
+        line = raw.strip()
+        if not line.startswith("public static ") or "(" in line or not line.endswith(";"):
+            continue
+        tokens = line[:-1].split()
+        if len(tokens) < 4:
+            continue
+        fields.append({
+            "type": tokens[-2],
+            "name": tokens[-1],
+            "declaration": line,
+        })
+    return fields
+
+
+def make_construction_planner(
+    project: str,
+    bug_id: int,
+    fixed_cp: str,
+    settings: dict[str, Any],
+    primed: dict[str, str] | None = None,
+    fixed_bin: str | None = None,
+) -> ConstructionPlanner:
+    """Create a memoized, time/depth-bounded public API construction planner."""
+    text_cache = dict(primed or {})
+
+    def inspect_type(type_name: str) -> dict[str, Any]:
+        text = text_cache.get(type_name)
+        if text is None:
+            text = javap(project, bug_id, "f", type_name, fixed_cp)
+            text_cache[type_name] = text
+        methods, class_decl = parse_public_api(text, type_name)
+        return {
+            "class_decl": class_decl,
+            "constructors": parse_public_constructors(text, type_name),
+            "methods": methods,
+            "static_fields": parse_public_static_fields(text),
+        }
+
+    subtype_cache: dict[str, list[str]] = {}
+
+    def project_class_names() -> list[str]:
+        if not fixed_bin:
+            return []
+        fixed_ws = workspace(project, bug_id, "f")
+        candidate = Path(fixed_bin)
+        if candidate.is_absolute():
+            container_prefix = Path(container_workspace(project, bug_id, "f"))
+            try:
+                candidate = fixed_ws / candidate.relative_to(container_prefix)
+            except ValueError:
+                return []
+        else:
+            candidate = fixed_ws / candidate
+        if not candidate.is_dir():
+            return []
+        names = []
+        for class_file in candidate.rglob("*.class"):
+            relative = class_file.relative_to(candidate).with_suffix("")
+            name = ".".join(relative.parts)
+            if not re.search(r"\$\d+(?:$|\$)", name) and not name.endswith(("package-info", "module-info")):
+                names.append(name)
+        return sorted(set(names))
+
+    all_project_classes = project_class_names()
+
+    def find_concrete_subtypes(base_type: str) -> list[str]:
+        if base_type in subtype_cache:
+            return subtype_cache[base_type]
+        package = base_type.rsplit(".", 1)[0] if "." in base_type else ""
+        ordered = sorted(
+            (name for name in all_project_classes if name != base_type),
+            key=lambda name: (0 if name.startswith(package + ".") else 1, name),
+        )
+        scan_limit = max(1, int(settings.get("construction_subtype_scan_classes", 120)))
+        ordered = ordered[:scan_limit]
+        if not ordered:
+            subtype_cache[base_type] = []
+            return []
+        cws = container_workspace(project, bug_id, "f")
+        names = " ".join(shlex.quote(name) for name in ordered)
+        command = (
+            f"cd {shlex.quote(cws)} && javap -public "
+            f"-classpath {shlex.quote(fixed_cp)} {names}"
+        )
+        result = docker_exec(
+            command,
+            timeout=max(1, int(settings.get("construction_subtype_scan_timeout_sec", 10))),
+            check=False,
+        )
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_$]){re.escape(base_type)}(?![A-Za-z0-9_$])"
+        )
+        found: list[str] = []
+        for raw in result.stdout.splitlines():
+            declaration = raw.strip()
+            if not declaration.startswith("public ") or "{" not in declaration:
+                continue
+            if " interface " in f" {declaration} " or " abstract " in f" {declaration} ":
+                continue
+            if not pattern.search(declaration):
+                continue
+            match = re.search(r"\b(?:class|enum)\s+([^\s<{]+)", declaration)
+            if match and match.group(1) != base_type:
+                found.append(match.group(1))
+        subtype_cache[base_type] = sorted(set(found))[
+            : max(1, int(settings.get("construction_max_subtypes_per_type", 6)))
+        ]
+        return subtype_cache[base_type]
+
+    return ConstructionPlanner(
+        inspect_type,
+        PlannerLimits(
+            max_depth=max(1, int(settings.get("construction_max_depth", 3))),
+            max_inspected_types=max(1, int(settings.get("construction_max_inspected_types", 24))),
+            max_constructors_per_type=max(1, int(settings.get("construction_max_constructors_per_type", 8))),
+            max_factories_per_type=max(1, int(settings.get("construction_max_factories_per_type", 6))),
+            timeout_sec=max(0.1, float(settings.get("construction_planning_timeout_sec", 15))),
+        ),
+        find_concrete_subtypes=find_concrete_subtypes,
+    )
 
 
 def parse_public_api(javap_text: str, class_name: str) -> tuple[list[dict[str, Any]], str]:
@@ -444,6 +572,7 @@ def build_setup_actions(
     methods: list[dict[str, Any]],
     concrete_methods: list[dict[str, Any]],
     settings: dict[str, Any],
+    construction_planner: ConstructionPlanner | None = None,
 ) -> list[dict[str, Any]]:
     """Build a small, generic state-setup pool without trigger tests or patches.
 
@@ -457,22 +586,34 @@ def build_setup_actions(
     if max_actions == 0:
         return []
 
-    helper_cache: dict[str, bool] = {}
+    helper_cache: dict[str, dict[str, Any] | None] = {}
 
-    def helper_is_instantiable(type_name: str) -> bool:
+    def helper_plan(type_name: str) -> dict[str, Any] | None:
         if type_name in helper_cache:
             return helper_cache[type_name]
         if type_name.endswith("[]") or type_name in SUPPORTED_ARG_TYPES or type_name == "void":
-            helper_cache[type_name] = False
-            return False
+            helper_cache[type_name] = None
+            return None
+        if construction_planner is not None:
+            plan = construction_planner.plan(type_name)
+            helper_cache[type_name] = plan
+            return plan
         try:
             text = javap(project, bug_id, "f", type_name, fixed_cp)
             _, decl = parse_public_api(text, type_name)
             ok = public_noarg_instantiable(text, type_name, decl)
         except Exception:
             ok = False
-        helper_cache[type_name] = ok
-        return ok
+        plan = ({
+            "strategy": "constructor",
+            "type": type_name,
+            "class_name": type_name,
+            "parameter_types": [],
+            "arguments": [],
+            "cost": 3.0,
+        } if ok else None)
+        helper_cache[type_name] = plan
+        return plan
 
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for method in [*methods, *concrete_methods]:
@@ -494,12 +635,13 @@ def build_setup_actions(
         for type_name in param_types:
             if type_name in SUPPORTED_ARG_TYPES:
                 arguments.append({"kind": "value", "type": type_name, "value": default_setup_value(type_name)})
-            elif helper_is_instantiable(type_name):
-                arguments.append({"kind": "new", "type": type_name})
-                object_count += 1
             else:
-                supported = False
-                break
+                plan = helper_plan(type_name)
+                if plan is None:
+                    supported = False
+                    break
+                arguments.append({"kind": "plan", "type": type_name, "plan": plan})
+                object_count += 1
         if not supported:
             continue
         actions.append({
@@ -546,7 +688,15 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
     bug_id = int(case["bug_id"])
     ensure_worker()
     for version in ("f", "b"):
+        print(
+            f"    [prepare] {project}-{bug_id}{version} checkout",
+            flush=True,
+        )
         checkout(project, bug_id, version)
+        print(
+            f"    [prepare] {project}-{bug_id}{version} compile",
+            flush=True,
+        )
         compile_revision(project, bug_id, version)
 
     fixed_cp = export_property(project, bug_id, "f", "cp.test")
@@ -565,15 +715,44 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
     concrete_methods, concrete_decl = parse_public_api(concrete_api_text, concrete_class)
 
 
-    receiver_constructor = choose_receiver_constructor(
-    concrete_api_text,
-    concrete_class,
-    concrete_decl,
-)
-    concrete_instantiable = receiver_constructor is not None
-
     settings = load_settings()
-    setup_actions = build_setup_actions(project, bug_id, fixed_cp, methods, concrete_methods, settings)
+    construction_planner = make_construction_planner(
+        project,
+        bug_id,
+        fixed_cp,
+        settings,
+        primed={concrete_class: concrete_api_text},
+        fixed_bin=fixed_bin,
+    )
+    construction_plan = construction_planner.plan(concrete_class)
+    construction_diagnostics = {
+        "failures": dict(construction_planner.failures),
+        "inspected_types": sorted(construction_planner.inspections),
+    }
+    print(
+        "    [prepare] construction="
+        + (str(construction_plan.get("strategy")) if construction_plan else "unsupported")
+        + f" inspected_types={len(construction_planner.inspections)}",
+        flush=True,
+    )
+    # Preserve the former flat metadata for old checkpoints/tools. New search
+    # and test emission use construction_plan whenever it is present.
+    receiver_constructor = choose_receiver_constructor(
+        concrete_api_text,
+        concrete_class,
+        concrete_decl,
+    )
+    concrete_instantiable = construction_plan is not None
+
+    setup_actions = build_setup_actions(
+        project,
+        bug_id,
+        fixed_cp,
+        methods,
+        concrete_methods,
+        settings,
+        construction_planner,
+    )
     setup_sequences = build_setup_sequences(setup_actions, settings)
     src, src_path = source_text(project, bug_id, target_class)
 
@@ -590,6 +769,8 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
         "target_selection_source": target_source,
         "concrete_class": concrete_class,
         "concrete_instantiable": concrete_instantiable,
+        "construction_plan": construction_plan,
+        "construction_diagnostics": construction_diagnostics,
         "receiver_constructor": receiver_constructor,
         "class_declaration": class_decl,
         "concrete_class_declaration": concrete_decl,

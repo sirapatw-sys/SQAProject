@@ -1,9 +1,14 @@
 import java.lang.reflect.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 
 public class CandidateRunner {
     private static Class<?> typeOf(String name) throws Exception {
+        if (name.endsWith("[]")) {
+            return Array.newInstance(typeOf(name.substring(0, name.length() - 2)), 0).getClass();
+        }
         switch (name) {
             case "byte": return byte.class;
             case "short": return short.class;
@@ -35,6 +40,116 @@ public class CandidateRunner {
                 if ("__NULL__".equals(value)) return null;
                 throw new IllegalArgumentException("Unsupported argument type: " + type);
         }
+    }
+
+    private static final class PlanNode {
+        String strategy;
+        String type;
+        String className;
+        String member;
+        String[] parameterTypes;
+        int[] children;
+        String payload;
+    }
+
+    private static String decodeText(String b64) {
+        return new String(Base64.getDecoder().decode(b64), StandardCharsets.UTF_8);
+    }
+
+    private static List<PlanNode> decodePlan(String encoded) {
+        String raw = decodeText(encoded);
+        String[] lines = raw.split("\\n", -1);
+        List<PlanNode> nodes = new ArrayList<>();
+        for (String line : lines) {
+            if (line.isEmpty()) continue;
+            String[] fields = line.split("\\t", -1);
+            if (fields.length != 7) {
+                throw new IllegalArgumentException("Malformed construction plan row");
+            }
+            PlanNode node = new PlanNode();
+            node.strategy = fields[0];
+            node.type = fields[1];
+            node.className = fields[2];
+            node.member = fields[3];
+            node.parameterTypes = fields[4].isEmpty() ? new String[0] : fields[4].split(",", -1);
+            String[] childFields = fields[5].isEmpty() ? new String[0] : fields[5].split(",", -1);
+            node.children = new int[childFields.length];
+            for (int i = 0; i < childFields.length; i++) {
+                node.children[i] = Integer.parseInt(childFields[i]);
+                if (node.children[i] < 0 || node.children[i] >= nodes.size()) {
+                    throw new IllegalArgumentException("Construction plan child must precede its parent");
+                }
+            }
+            node.payload = fields[6];
+            nodes.add(node);
+        }
+        if (nodes.isEmpty()) throw new IllegalArgumentException("Empty construction plan");
+        return nodes;
+    }
+
+    private static Object literalValue(String valueType, String json) {
+        String value = json;
+        if (json.startsWith("\"") && json.endsWith("\"") && json.length() >= 2) {
+            value = json.substring(1, json.length() - 1)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+                .replace("\\n", "\n")
+                .replace("\\r", "\r")
+                .replace("\\t", "\t");
+        }
+        switch (valueType) {
+            case "byte": case "java.lang.Byte": return Byte.valueOf(value);
+            case "short": case "java.lang.Short": return Short.valueOf(value);
+            case "int": case "java.lang.Integer": return Integer.valueOf(value);
+            case "long": case "java.lang.Long": return Long.valueOf(value);
+            case "float": case "java.lang.Float": return Float.valueOf(value);
+            case "double": case "java.lang.Double": return Double.valueOf(value);
+            case "boolean": case "java.lang.Boolean": return Boolean.valueOf(value);
+            case "char": case "java.lang.Character": return value.isEmpty() ? Character.valueOf('\0') : Character.valueOf(value.charAt(0));
+            case "java.lang.String": return value;
+            default: throw new IllegalArgumentException("Unsupported literal value type: " + valueType);
+        }
+    }
+
+    private static Object constructPlan(String encoded) throws Exception {
+        List<PlanNode> nodes = decodePlan(encoded);
+        Object[] values = new Object[nodes.size()];
+        for (int index = 0; index < nodes.size(); index++) {
+            PlanNode node = nodes.get(index);
+            Object[] arguments = new Object[node.children.length];
+            for (int i = 0; i < node.children.length; i++) arguments[i] = values[node.children[i]];
+            Class<?>[] parameterTypes = new Class<?>[node.parameterTypes.length];
+            for (int i = 0; i < parameterTypes.length; i++) parameterTypes[i] = typeOf(node.parameterTypes[i]);
+
+            switch (node.strategy) {
+                case "literal":
+                    values[index] = literalValue(node.member, node.payload);
+                    break;
+                case "empty_array": {
+                    String component = node.type.substring(0, node.type.length() - 2);
+                    values[index] = Array.newInstance(typeOf(component), 0);
+                    break;
+                }
+                case "enum_first": {
+                    Object[] constants = typeOf(node.type).getEnumConstants();
+                    if (constants == null || constants.length == 0) throw new IllegalArgumentException("Enum has no constants: " + node.type);
+                    values[index] = constants[0];
+                    break;
+                }
+                case "constructor":
+                    values[index] = typeOf(node.className).getConstructor(parameterTypes).newInstance(arguments);
+                    break;
+                case "static_factory":
+                    values[index] = typeOf(node.className).getMethod(node.member, parameterTypes).invoke(null, arguments);
+                    break;
+                case "static_field":
+                    values[index] = typeOf(node.className).getField(node.member).get(null);
+                    break;
+                default:
+                    throw new IllegalArgumentException("Unsupported construction strategy: " + node.strategy);
+            }
+        }
+        return values[values.length - 1];
     }
 
     private static String enc(String value) {
@@ -189,6 +304,8 @@ public class CandidateRunner {
                 values[i] = helperClass.getConstructor().newInstance();
             } else if (spec.startsWith("V:")) {
                 values[i] = parse(typeNames[i], spec.substring(2));
+            } else if (spec.startsWith("P:")) {
+                values[i] = constructPlan(spec.substring(2));
             } else {
                 throw new IllegalArgumentException("Unknown setup argument spec: " + spec);
             }
@@ -205,6 +322,10 @@ public class CandidateRunner {
 
     public static void main(String[] args) {
     try {
+        if (args.length > 0 && "--plan".equals(args[0])) {
+            runWithPlan(args);
+            return;
+        }
         if (args.length < 6) {
             throw new IllegalArgumentException(
                 "Usage: <class> <ctorTypesCsv> <ctorCount> "
@@ -388,4 +509,73 @@ public class CandidateRunner {
         System.exit(2);
     }
 }
+
+    private static void runWithPlan(String[] args) throws Exception {
+        if (args.length < 6) {
+            throw new IllegalArgumentException(
+                "Usage: --plan <planB64> <class> <method> <methodTypesCsv> <setupCount> [setupStepB64...] [methodValuesB64...]"
+            );
+        }
+        String plan = args[1];
+        String className = args[2];
+        String methodName = args[3];
+        String[] methodTypeNames = args[4].isEmpty() ? new String[0] : args[4].split(",", -1);
+        int setupCount = Integer.parseInt(args[5]);
+        int expectedArgs = 6 + setupCount + methodTypeNames.length;
+        if (setupCount < 0 || args.length != expectedArgs) {
+            throw new IllegalArgumentException("Plan-mode argument count mismatch");
+        }
+
+        Class<?> clazz = Class.forName(className);
+        Object receiver = constructPlan(plan);
+        for (int i = 0; i < setupCount; i++) {
+            applySetupStep(clazz, receiver, args[6 + i]);
+        }
+        Class<?>[] methodParameterTypes = new Class<?>[methodTypeNames.length];
+        Object[] methodValues = new Object[methodTypeNames.length];
+        int valueOffset = 6 + setupCount;
+        for (int i = 0; i < methodTypeNames.length; i++) {
+            methodParameterTypes[i] = typeOf(methodTypeNames[i]);
+            methodValues[i] = parse(methodTypeNames[i], args[valueOffset + i]);
+        }
+        Method method = clazz.getMethod(methodName, methodParameterTypes);
+        emitInvocation(clazz, receiver, method, methodValues, methodName);
+    }
+
+    private static void emitInvocation(
+        Class<?> clazz, Object receiver, Method method, Object[] methodValues, String methodName
+    ) throws Exception {
+        Object result;
+        try {
+            result = method.invoke(receiver, methodValues);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+            System.out.println("STATUS=EXCEPTION");
+            System.out.println("EXCEPTION_CLASS=" + cause.getClass().getName());
+            System.out.println("EXCEPTION_MESSAGE_B64=" + enc(String.valueOf(cause.getMessage())));
+            return;
+        }
+        System.out.println("STATUS=OK");
+        System.out.println("RETURN_TYPE=" + method.getReturnType().getName());
+        if (method.getReturnType() == void.class) {
+            if (!emitVoidState(clazz, receiver, methodName)) {
+                System.out.println("RETURN_KIND=VOID");
+                System.out.println("RETURN_B64=");
+            }
+        } else if (result == null) {
+            System.out.println("RETURN_KIND=NULL");
+            System.out.println("RETURN_B64=");
+        } else if (result == receiver) {
+            System.out.println("RETURN_KIND=SAME_RECEIVER");
+            System.out.println("RETURN_B64=");
+        } else if (isSupportedArray(result)) {
+            emitArray(result);
+        } else if (result instanceof String || result instanceof Character || result instanceof Number || result instanceof Boolean) {
+            System.out.println("RETURN_KIND=SCALAR");
+            System.out.println("RETURN_B64=" + enc(String.valueOf(result)));
+        } else {
+            System.out.println("RETURN_KIND=OBJECT");
+            System.out.println("RETURN_B64=");
+        }
+    }
 }

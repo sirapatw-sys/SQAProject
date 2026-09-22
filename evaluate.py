@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import d4j
+from construction import encode_plan
 
 ROOT = Path(__file__).resolve().parent
 TMP = ROOT / "results/tmp"
@@ -55,6 +56,8 @@ def encode_setup_step(action: dict[str, Any]) -> str:
             fields.append("N:" + str(arg["type"]))
         elif arg.get("kind") == "value":
             fields.append("V:" + b64(arg.get("value")))
+        elif arg.get("kind") == "plan":
+            fields.append("P:" + encode_plan(arg["plan"]))
         else:
             raise ValueError(f"Unsupported setup argument: {arg}")
     raw = "\t".join(fields)
@@ -270,43 +273,47 @@ def search_candidate(
     bin_classes = resolve_bin(ws, meta["fixed_bin_classes"])
     types = method["parameter_types"]
 
-    constructor = meta.get("receiver_constructor") or {
-        "parameter_types": [],
-        "values": [],
-    }
-
-    constructor_types = list(
-        constructor.get("parameter_types", [])
-    )
-
-    constructor_values = list(
-        constructor.get("values", [])
-    )
-
-    if len(constructor_types) != len(constructor_values):
-        raise ValueError(
-            "Receiver constructor type/value count mismatch"
-        )
-
     setup_specs = [
         encode_setup_step(action)
         for action in setup_actions
     ]
-
-    runner_args = [
-        meta["concrete_class"],
-        ",".join(constructor_types),
-        str(len(constructor_types)),
-        method["name"],
-        ",".join(types),
-        str(len(setup_specs)),
-        *[b64(value) for value in constructor_values],
-        *setup_specs,
-        *[b64(value) for value in values],
-    ]
+    construction_plan = meta.get("construction_plan")
+    if construction_plan:
+        runner_args = [
+            "--plan",
+            encode_plan(construction_plan),
+            meta["concrete_class"],
+            method["name"],
+            ",".join(types),
+            str(len(setup_specs)),
+            *setup_specs,
+            *[b64(value) for value in values],
+        ]
+    else:
+        constructor = meta.get("receiver_constructor") or {
+            "parameter_types": [],
+            "values": [],
+        }
+        constructor_types = list(constructor.get("parameter_types", []))
+        constructor_values = list(constructor.get("values", []))
+        if len(constructor_types) != len(constructor_values):
+            raise ValueError("Receiver constructor type/value count mismatch")
+        runner_args = [
+            meta["concrete_class"],
+            ",".join(constructor_types),
+            str(len(constructor_types)),
+            method["name"],
+            ",".join(types),
+            str(len(setup_specs)),
+            *[b64(value) for value in constructor_values],
+            *setup_specs,
+            *[b64(value) for value in values],
+        ]
     quoted_args = " ".join(shlex.quote(x) for x in runner_args)
+    inner_timeout = max(1, int(math.ceil(float(timeout))))
     command = (
         f'cd {shlex.quote(ws)} && rm -f {shlex.quote(exec_container)} {shlex.quote(csv_container)} && '
+        f'timeout --signal=TERM --kill-after=1s {inner_timeout}s '
         f'java -javaagent:{AGENT}=destfile={shlex.quote(exec_container)} '
         f'-cp {shlex.quote("/workspace/harness/classes:" + cp)} CandidateRunner {quoted_args}; rc=$?; '
         f'if [ -s {shlex.quote(exec_container)} ]; then '
@@ -314,7 +321,7 @@ def search_candidate(
         'exit $rc'
     )
     start = time.perf_counter()
-    result = d4j.docker_exec(command, timeout=timeout, check=False)
+    result = d4j.docker_exec(command, timeout=float(timeout) + 2.0, check=False)
     elapsed = time.perf_counter() - start
     oracle = parse_runner_output(result.stdout)
     coverage = coverage_from_csv(csv_host, meta["target_class"])
@@ -380,6 +387,19 @@ def java_literal(type_name: str, value: Any) -> str:
         return "'" + _escape_java(ch, "'") + "'"
     if type_name == "java.lang.String":
         return '"' + _escape_java(str(value), '"') + '"'
+
+    boxed = {
+        "java.lang.Byte": "byte",
+        "java.lang.Short": "short",
+        "java.lang.Integer": "int",
+        "java.lang.Long": "long",
+        "java.lang.Float": "float",
+        "java.lang.Double": "double",
+        "java.lang.Boolean": "boolean",
+        "java.lang.Character": "char",
+    }
+    if type_name in boxed:
+        return java_literal(boxed[type_name], value)
 
     if type_name == "java.lang.Comparable":
         string_literal = (
@@ -470,7 +490,55 @@ def java_source_type(type_name: str) -> str:
     """Convert a JVM binary nested-class name to Java source notation."""
     return type_name.replace("$", ".")
 
+
+def construction_java_expression(plan: dict[str, Any]) -> str:
+    strategy = plan.get("strategy")
+    type_name = str(plan.get("type", ""))
+    if strategy == "literal":
+        return java_literal(str(plan.get("value_type", type_name)), plan.get("value"))
+    if strategy == "empty_array":
+        dimensions = 0
+        base = type_name
+        while base.endswith("[]"):
+            dimensions += 1
+            base = base[:-2]
+        if dimensions == 0:
+            raise ValueError(f"Invalid array construction type: {type_name}")
+        return f"new {java_source_type(base)}[0]" + "[]" * (dimensions - 1)
+    if strategy == "enum_first":
+        return f"{java_source_type(type_name)}.values()[0]"
+
+    arguments = ", ".join(
+        construction_java_expression(child)
+        for child in plan.get("arguments", [])
+    )
+    owner = java_source_type(str(plan.get("class_name", type_name)))
+    if strategy == "constructor":
+        binary_owner = str(plan.get("class_name", type_name))
+        parameter_types = list(plan.get("parameter_types", []))
+        children = list(plan.get("arguments", []))
+        if "$" in binary_owner:
+            enclosing = binary_owner.rsplit("$", 1)[0]
+            if parameter_types and parameter_types[0] == enclosing and children:
+                enclosing_expression = construction_java_expression(children[0])
+                inner_simple = binary_owner.rsplit("$", 1)[1].replace("$", ".")
+                inner_arguments = ", ".join(
+                    construction_java_expression(child) for child in children[1:]
+                )
+                return f"{enclosing_expression}.new {inner_simple}({inner_arguments})"
+        return f"new {owner}({arguments})"
+    if strategy == "static_factory":
+        return f"{owner}.{plan['method_name']}({arguments})"
+    if strategy == "static_field":
+        return f"{owner}.{plan['field_name']}"
+    raise ValueError(f"Unsupported construction strategy: {strategy}")
+
 def receiver_java_line(meta: dict[str, Any]) -> str:
+    construction_plan = meta.get("construction_plan")
+    if construction_plan:
+        class_name = java_source_type(meta["concrete_class"])
+        return f"    {class_name} obj = {construction_java_expression(construction_plan)};"
+
     constructor = meta.get("receiver_constructor") or {
         "parameter_types": [],
         "values": [],
@@ -513,13 +581,15 @@ def setup_java_lines(action: dict[str, Any], receiver: str = "obj") -> list[str]
             args.append(f"new {java_source_type(str(arg['type']))}()")
         elif arg.get("kind") == "value":
             args.append(java_literal(str(arg["type"]), arg.get("value")))
+        elif arg.get("kind") == "plan":
+            args.append(construction_java_expression(arg["plan"]))
         else:
             raise ValueError(f"Unsupported setup argument: {arg}")
     return [f"    {receiver}.{action['name']}({', '.join(args)});"]
 
 def setup_has_fresh_object_arguments(setup_actions: list[dict[str, Any]],) -> bool:
     return any(
-        argument.get("kind") == "new"
+        argument.get("kind") in {"new", "plan"}
         for action in setup_actions
         for argument in action.get("arguments", [])
     )
@@ -665,7 +735,23 @@ def qualified_class_name_from_java(code: str) -> str:
     return f"{package.group(1)}.{simple}" if package else simple
 
 
-def _compile_and_run(meta: dict[str, Any], source_container: str, class_name: str, version: str, with_coverage: bool) -> dict[str, Any]:
+def _remaining_timeout(deadline: float | None, cap: float) -> float:
+    if deadline is None:
+        return cap
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("algorithm case time budget exhausted")
+    return max(0.25, min(cap, remaining))
+
+
+def _compile_and_run(
+    meta: dict[str, Any],
+    source_container: str,
+    class_name: str,
+    version: str,
+    with_coverage: bool,
+    deadline: float | None = None,
+) -> dict[str, Any]:
     project_cp = (meta["fixed_cp_test"] if version == "f" else meta["buggy_cp_test"])
     # Generated tests use JUnit 4 even when the Defects4J project itself uses
     # JUnit 3. Put JUnit 4 first so org.junit.Test and Assert resolve correctly.
@@ -679,23 +765,35 @@ def _compile_and_run(meta: dict[str, Any], source_container: str, class_name: st
     csv_host = TMP / f"test_{token}.csv"
     classfiles = resolve_bin(ws, bin_classes)
     compile_cmd = f'cd {shlex.quote(ws)} && rm -rf {shlex.quote(out_dir)} && mkdir -p {shlex.quote(out_dir)} && javac -cp {shlex.quote(cp)} -d {shlex.quote(out_dir)} {shlex.quote(source_container)}'
-    cr = d4j.docker_exec(compile_cmd, timeout=120, check=False)
+    cr = d4j.docker_exec(
+        compile_cmd,
+        timeout=_remaining_timeout(deadline, 120),
+        check=False,
+    )
     if cr.returncode != 0:
         return {"compile_success": False, "test_success": False, "returncode": cr.returncode, "output_tail": cr.stdout.splitlines()[-50:], "coverage": None}
     java = "java "
     if with_coverage:
         java += f"-javaagent:{AGENT}=destfile={shlex.quote(exec_path)} "
     java += f'-cp {shlex.quote(out_dir + ":" + cp)} org.junit.runner.JUnitCore {shlex.quote(class_name)}'
-    rr = d4j.docker_exec(f'cd {shlex.quote(ws)} && rm -f {shlex.quote(exec_path)} {shlex.quote(csv_path)} && {java}', timeout=d4j.load_settings()["test_timeout_sec"], check=False)
+    rr = d4j.docker_exec(
+        f'cd {shlex.quote(ws)} && rm -f {shlex.quote(exec_path)} {shlex.quote(csv_path)} && {java}',
+        timeout=_remaining_timeout(deadline, float(d4j.load_settings()["test_timeout_sec"])),
+        check=False,
+    )
     coverage = None
     if with_coverage:
         d4j.docker_exec(
             f'if [ -s {shlex.quote(exec_path)} ]; then java -jar {CLI} report {shlex.quote(exec_path)} --classfiles {shlex.quote(classfiles)} --csv {shlex.quote(csv_path)} >/dev/null 2>&1; fi',
-            timeout=120,
+            timeout=_remaining_timeout(deadline, 120),
             check=False,
         )
         coverage = coverage_from_csv(csv_host, meta["target_class"])
-    d4j.docker_exec(f'rm -rf {shlex.quote(out_dir)} {shlex.quote(exec_path)} {shlex.quote(csv_path)}', check=False)
+    d4j.docker_exec(
+        f'rm -rf {shlex.quote(out_dir)} {shlex.quote(exec_path)} {shlex.quote(csv_path)}',
+        timeout=_remaining_timeout(deadline, 15),
+        check=False,
+    )
     return {
         "compile_success": True,
         "test_success": rr.returncode == 0,
@@ -705,7 +803,11 @@ def _compile_and_run(meta: dict[str, Any], source_container: str, class_name: st
     }
 
 
-def evaluate_test(meta: dict[str, Any], java_path: Path) -> dict[str, Any]:
+def evaluate_test(
+    meta: dict[str, Any],
+    java_path: Path,
+    deadline: float | None = None,
+) -> dict[str, Any]:
     ensure_jacoco()
     code = java_path.read_text(encoding="utf-8")
     class_name = qualified_class_name_from_java(code)
@@ -714,7 +816,7 @@ def evaluate_test(meta: dict[str, Any], java_path: Path) -> dict[str, Any]:
     except ValueError:
         raise ValueError("Generated Java file must be inside the benchmark repository")
     source_container = "/workspace/" + rel.as_posix()
-    fixed = _compile_and_run(meta, source_container, class_name, "f", True)
+    fixed = _compile_and_run(meta, source_container, class_name, "f", True, deadline)
     if not fixed["compile_success"] or not fixed["test_success"]:
         return {
             "valid_test": False,
@@ -723,7 +825,7 @@ def evaluate_test(meta: dict[str, Any], java_path: Path) -> dict[str, Any]:
             "buggy": None,
             "coverage": fixed.get("coverage"),
         }
-    buggy = _compile_and_run(meta, source_container, class_name, "b", False)
+    buggy = _compile_and_run(meta, source_container, class_name, "b", False, deadline)
     fault = bool(buggy["compile_success"] and not buggy["test_success"])
     return {
         "valid_test": True,
