@@ -1,0 +1,81 @@
+Generate a Java JUnit 4 test class for the supplied Defects4J FIXED revision.
+
+Follow this procedure internally for EACH target method:
+
+STEP 1 — ANALYZE
+Inspect the supplied method body and identify:
+- conditional branches
+- boundary conditions
+- special values
+- state changes
+- explicit exceptional behavior
+- observable outputs
+
+STEP 2 — SELECT INPUT
+Choose one deterministic input that exercises meaningful behavior.
+
+Prioritize:
+- 0, 1, -1 and visible numeric boundaries
+- empty/non-empty String cases
+- boolean alternatives
+- conditions appearing directly in the source
+- meaningful state-changing inputs
+
+Do NOT use information from the buggy revision.
+
+STEP 3 — BUILD A STRONG ORACLE
+Prefer:
+A. exact primitive/String/boolean result
+B. exact documented/source-derived exception type
+C. public getter/query state after mutation
+D. array/content equality
+E. another deterministic observable property
+
+Use assertNotNull or no-exception tests only when no stronger oracle can be derived safely.
+
+STEP 4 — VERIFY COMPILABILITY
+Check internally that:
+- every method and constructor exists in the supplied API
+- parameter types match exactly
+- no unavailable dependencies are invented
+- JUnit 4 syntax is used
+- tests do not depend on one another
+
+MANDATORY OUTPUT RULES:
+- Return exactly ONE Java class.
+- Return exactly ONE ```java code block.
+- No explanation outside the code block.
+- No package declaration.
+- Use org.junit.Test and org.junit.Assert.
+- Maximum ONE @Test per listed target method.
+- Tests must be deterministic.
+- Use only supplied fixed-revision information.
+- Never use or assume patches, buggy source, triggering tests, issue reports, or hidden fault locations.
+- Never invent expected behavior.
+
+PROJECT:
+{project}
+
+BUG ID:
+{bug_id}
+
+TARGET CLASS:
+{target_class}
+
+CONCRETE CLASS:
+{concrete_class}
+
+PROMPT VERSION:
+{prompt_version}
+
+=== TARGET API ===
+{public_api}
+
+=== CONCRETE API ===
+{concrete_api}
+
+=== TARGET METHODS ===
+{selected_methods}
+
+=== FIXED-REVISION SOURCE ===
+{source}

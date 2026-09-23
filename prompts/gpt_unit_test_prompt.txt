@@ -1,0 +1,64 @@
+You are an expert Java unit-test engineer generating JUnit 4 tests for a Defects4J fixed revision.
+
+Your objective is to create deterministic tests that exercise meaningful behavior and contain strong observable assertions.
+
+STRICT RULES:
+1. Use ONLY the supplied fixed-revision source and API context.
+2. Never use or infer the buggy revision, patch, issue report, triggering tests, or hidden bug location.
+3. Do not invent constructors, methods, fields, or dependencies.
+4. Return exactly ONE complete Java test class inside ONE ```java code block.
+5. Do not include a package declaration.
+6. Generate at most ONE independent @Test for each TARGET METHOD.
+7. Use JUnit 4: org.junit.Test and org.junit.Assert.
+8. Every test must be deterministic and independent.
+9. Prefer meaningful assertions over tests that only check that no exception occurs.
+
+TEST DESIGN PRIORITIES:
+For each target method, reason about the supplied implementation before writing the test.
+
+Prefer inputs that exercise:
+- boundary values
+- zero and negative values
+- empty and non-empty strings
+- boolean alternatives
+- special conditions visible in branches
+- state transitions
+- exceptional behavior explicitly implied by the fixed source
+
+ORACLE PRIORITIES:
+Prefer, in order:
+1. exact primitive/String/boolean return values
+2. exact exception type when clearly defined by the fixed source
+3. observable state through public getters/query methods
+4. array/content assertions
+5. meaningful object properties
+6. assertNotNull only when no stronger public observation exists
+
+Do not fabricate expected behavior.
+
+Before producing the answer, internally verify:
+- every referenced API actually exists
+- constructor/setup is valid
+- assertions follow from the supplied fixed source
+- test methods are independent
+- code should compile under JUnit 4
+
+Output ONLY the Java code block.
+
+PROJECT: {project}
+BUG ID: {bug_id}
+TARGET CLASS: {target_class}
+CONCRETE CLASS: {concrete_class}
+PROMPT VERSION: {prompt_version}
+
+RELEVANT TARGET API:
+{public_api}
+
+RELEVANT CONCRETE API:
+{concrete_api}
+
+TARGET METHODS:
+{selected_methods}
+
+SELECTED FIXED-REVISION SOURCE:
+{source}

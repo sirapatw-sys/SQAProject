@@ -60,22 +60,45 @@ def git_commit() -> str | None:
 def experiment_id() -> str:
     """Hash code/config/prompt files so results from different experiment definitions are not silently merged."""
     global _EXPERIMENT_ID
+
     if _EXPERIMENT_ID is not None:
         return _EXPERIMENT_ID
+
     files = [
-        "run.py", "d4j.py", "evaluate.py",
-        "algorithms/hill_climbing.py", "algorithms/avm.py","algorithms/candidate_archive.py",
-        "ai/gpt.py", "ai/gemini.py", "harness/CandidateRunner.java",
-        "docker/Dockerfile", "docker/compose.yaml", "requirements.txt",
-        "config/settings.json", "config/cases.csv", "prompts/unit_test_prompt.txt",
+        "run.py",
+        "d4j.py",
+        "evaluate.py",
+        "construction.py",
+
+        "algorithms/hill_climbing.py",
+        "algorithms/avm.py",
+        "algorithms/candidate_archive.py",
+
+        "ai/gpt.py",
+        "ai/gemini.py",
+
+        "harness/CandidateRunner.java",
+
+        "docker/Dockerfile",
+        "docker/compose.yaml",
+        "requirements.txt",
+
+        "config/settings.json",
+        "config/cases.csv",
+
+        "prompts/gpt_unit_test_prompt.txt",
+        "prompts/gemini_unit_test_prompt.txt",
     ]
+
     h = hashlib.sha256()
+
     for name in files:
         path = ROOT / name
         h.update(name.encode("utf-8"))
         h.update(b"\0")
         h.update(path.read_bytes())
         h.update(b"\0")
+
     _EXPERIMENT_ID = h.hexdigest()[:16]
     return _EXPERIMENT_ID
 
@@ -508,9 +531,40 @@ def compact_api_for_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> tu
     return target_api, concrete_api
 
 
-def build_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
-    template = (ROOT / "prompts/unit_test_prompt.txt").read_text(encoding="utf-8")
-    public_api, concrete_api = compact_api_for_prompt(meta, settings)
+PROMPT_FILES = {
+    "gpt": "prompts/gpt_unit_test_prompt.txt",
+    "gemini": "prompts/gemini_unit_test_prompt.txt",
+}
+
+
+def build_prompt(
+    meta: dict[str, Any],
+    settings: dict[str, Any],
+    method: str,
+) -> str:
+    prompt_file = PROMPT_FILES.get(method)
+
+    if not prompt_file:
+        raise ValueError(
+            f"No prompt template configured for AI method: {method}"
+        )
+
+    template = (ROOT / prompt_file).read_text(
+        encoding="utf-8"
+    )
+
+    public_api, concrete_api = compact_api_for_prompt(
+        meta,
+        settings,
+    )
+
+    selected_methods = "\n".join(
+        f"- {m['declaration']} descriptor={m['descriptor']}"
+        for m in meta["eligible_methods"][
+            : int(settings["max_methods_per_case"])
+        ]
+    ) or "- none"
+
     return template.format(
         project=meta["project"],
         bug_id=meta["bug_id"],
@@ -519,11 +573,11 @@ def build_prompt(meta: dict[str, Any], settings: dict[str, Any]) -> str:
         prompt_version=settings["prompt_version"],
         public_api=public_api,
         concrete_api=concrete_api,
-        selected_methods="\n".join(
-            f"- {m['declaration']} descriptor={m['descriptor']}"
-            for m in meta["eligible_methods"][: int(settings["max_methods_per_case"])]
-        ) or "- none",
-        source=compact_source_for_prompt(meta, settings),
+        selected_methods=selected_methods,
+        source=compact_source_for_prompt(
+            meta,
+            settings,
+        ),
     )
 
 def generated_dir(worker: str, case: dict[str, str], method: str, run_id: str) -> Path:
@@ -646,88 +700,269 @@ def run_algorithm(worker: str, case: dict[str, str], meta: dict[str, Any], metho
     })
     return record
 
-def run_ai(worker: str, case: dict[str, str], meta: dict[str, Any], method: str, run_id: str, repetition: int, settings: dict[str, Any]) -> dict[str, Any]:
-    record = common_record(worker, case, method, run_id, meta)
+def run_ai(
+    worker: str,
+    case: dict[str, str],
+    meta: dict[str, Any],
+    method: str,
+    run_id: str,
+    repetition: int,
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    record = common_record(
+        worker,
+        case,
+        method,
+        run_id,
+        meta,
+    )
+
     record["repetition"] = repetition
     record["prompt_version"] = settings["prompt_version"]
+
+    if method not in PROMPT_FILES:
+        record.update({
+            "status": "error",
+            "error": f"No prompt template configured for AI method: {method}",
+            "test_case_count": 0,
+        })
+        return record
+
+    # เก็บว่า result นี้ใช้ template ตัวไหน
+    record["prompt_template"] = PROMPT_FILES[method]
+
     total_start = time.perf_counter()
     generation_start = time.perf_counter()
-    prompt = build_prompt(meta, settings)
+
+    try:
+        prompt = build_prompt(
+            meta,
+            settings,
+            method,
+        )
+    except Exception as exc:
+        record.update({
+            "status": "error",
+            "error": f"build_prompt: {exc}",
+            "test_case_count": 0,
+            "generation_time_sec": (
+                time.perf_counter() - generation_start
+            ),
+            "evaluation_time_sec": 0.0,
+            "duration_sec": (
+                time.perf_counter() - total_start
+            ),
+        })
+        return record
+
     record["prompt_chars"] = len(prompt)
-    record["target_method_count"] = min(len(meta.get("eligible_methods", [])), int(settings["max_methods_per_case"]))
-    out_dir = generated_dir(worker, case, method, run_id)
+
+    record["target_method_count"] = min(
+        len(meta.get("eligible_methods", [])),
+        int(settings["max_methods_per_case"]),
+    )
+
+    out_dir = generated_dir(
+        worker,
+        case,
+        method,
+        run_id,
+    )
+
     prompt_path = out_dir / "prompt.txt"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    provider = gpt.generate if method == "gpt" else gemini.generate
-    response = provider(prompt, settings)
-    record["provider"] = {k: v for k, v in response.items() if k != "text"}
-    record["prompt_file"] = str(prompt_path.relative_to(ROOT))
+    prompt_path.write_text(
+        prompt,
+        encoding="utf-8",
+    )
+
+    provider = (
+        gpt.generate
+        if method == "gpt"
+        else gemini.generate
+    )
+
+    response = provider(
+        prompt,
+        settings,
+    )
+
+    record["provider"] = {
+        k: v
+        for k, v in response.items()
+        if k != "text"
+    }
+
+    # generated prompt จริงของ case นี้
+    record["prompt_file"] = str(
+        prompt_path.relative_to(ROOT)
+    )
+
     if response["status"] == "paused_quota":
         record.update({
             "status": "paused_quota",
             "error": response.get("error"),
             "test_case_count": 0,
-            "generation_time_sec": time.perf_counter() - generation_start,
+            "generation_time_sec": (
+                time.perf_counter() - generation_start
+            ),
             "evaluation_time_sec": 0.0,
-            "duration_sec": time.perf_counter() - total_start,
+            "duration_sec": (
+                time.perf_counter() - total_start
+            ),
         })
         return record
+
     if response["status"] != "generated":
         record.update({
             "status": "error",
-            "error": response.get("error", "AI generation failed"),
+            "error": response.get(
+                "error",
+                "AI generation failed",
+            ),
             "test_case_count": 0,
-            "generation_time_sec": time.perf_counter() - generation_start,
+            "generation_time_sec": (
+                time.perf_counter() - generation_start
+            ),
             "evaluation_time_sec": 0.0,
-            "duration_sec": time.perf_counter() - total_start,
+            "duration_sec": (
+                time.perf_counter() - total_start
+            ),
         })
         return record
+
     response_path = out_dir / "response.txt"
-    response_path.write_text(response["text"], encoding="utf-8")
-    record["response_file"] = str(response_path.relative_to(ROOT))
+
+    response_path.write_text(
+        response["text"],
+        encoding="utf-8",
+    )
+
+    record["response_file"] = str(
+        response_path.relative_to(ROOT)
+    )
+
     try:
-        code = evaluate.extract_java_code(response["text"])
-        class_name = evaluate.class_name_from_java(code)
-        java_path = out_dir / f"{class_name}.java"
-        java_path.write_text(code, encoding="utf-8")
-        record["test_case_count"] = evaluate.count_test_cases_from_java(code)
-        record["generation_time_sec"] = time.perf_counter() - generation_start
+        code = evaluate.extract_java_code(
+            response["text"]
+        )
+
+        class_name = evaluate.class_name_from_java(
+            code
+        )
+
+        java_path = (
+            out_dir / f"{class_name}.java"
+        )
+
+        java_path.write_text(
+            code,
+            encoding="utf-8",
+        )
+
+        record["test_case_count"] = (
+            evaluate.count_test_cases_from_java(
+                code
+            )
+        )
+
+        record["generation_time_sec"] = (
+            time.perf_counter()
+            - generation_start
+        )
+
     except Exception as exc:
         record.update({
             "status": "error",
             "error": f"parse: {exc}",
             "test_case_count": 0,
-            "generation_time_sec": time.perf_counter() - generation_start,
+            "generation_time_sec": (
+                time.perf_counter()
+                - generation_start
+            ),
             "evaluation_time_sec": 0.0,
-            "duration_sec": time.perf_counter() - total_start,
+            "duration_sec": (
+                time.perf_counter()
+                - total_start
+            ),
         })
         return record
 
     evaluation_start = time.perf_counter()
+
     try:
-        evaluation = evaluate.evaluate_test(meta, java_path)
+        evaluation = evaluate.evaluate_test(
+            meta,
+            java_path,
+        )
+
     except Exception as exc:
         record.update({
             "status": "error",
             "error": f"evaluate: {exc}",
-            "generated_test": str(java_path.relative_to(ROOT)),
-            "evaluation_time_sec": time.perf_counter() - evaluation_start,
-            "duration_sec": time.perf_counter() - total_start,
+            "generated_test": str(
+                java_path.relative_to(ROOT)
+            ),
+            "evaluation_time_sec": (
+                time.perf_counter()
+                - evaluation_start
+            ),
+            "duration_sec": (
+                time.perf_counter()
+                - total_start
+            ),
         })
         return record
-    record["evaluation_time_sec"] = time.perf_counter() - evaluation_start
+
+    record["evaluation_time_sec"] = (
+        time.perf_counter()
+        - evaluation_start
+    )
+
     coverage = evaluation.get("coverage") or {}
-    final_status = "completed" if (not evaluation["valid_test"] or coverage.get("success") is True) else "error"
+
+    final_status = (
+        "completed"
+        if (
+            not evaluation["valid_test"]
+            or coverage.get("success") is True
+        )
+        else "error"
+    )
+
     record.update({
         "status": final_status,
-        "error": None if final_status == "completed" else "Final JaCoCo coverage was not collected successfully",
-        "generated_test": str(java_path.relative_to(ROOT)),
+
+        "error": (
+            None
+            if final_status == "completed"
+            else (
+                "Final JaCoCo coverage was not "
+                "collected successfully"
+            )
+        ),
+
+        "generated_test": str(
+            java_path.relative_to(ROOT)
+        ),
+
         "valid_test": evaluation["valid_test"],
-        "fault_detected": evaluation["fault_detected"],
-        "coverage": evaluation.get("coverage"),
+
+        "fault_detected": (
+            evaluation["fault_detected"]
+        ),
+
+        "coverage": evaluation.get(
+            "coverage"
+        ),
+
         "evaluation": evaluation,
-        "duration_sec": time.perf_counter() - total_start,
+
+        "duration_sec": (
+            time.perf_counter()
+            - total_start
+        ),
     })
+
     return record
 
 def parse_shard(value: str | None) -> tuple[int, int] | None:
