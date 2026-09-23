@@ -12,12 +12,17 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from construction import ConstructionPlanner, PlannerLimits
+
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / ".work"
 RESULTS = ROOT / "results"
 COMPOSE = ["docker", "compose", "--env-file", ".env", "-f", "docker/compose.yaml"]
 SUPPORTED_ARG_TYPES = {
     "byte", "short", "int", "long", "float", "double", "boolean", "char", "java.lang.String"
+}
+SUPPORTED_CONSTRUCTOR_TYPES = SUPPORTED_ARG_TYPES | {
+    "java.lang.Comparable",
 }
 _WORKER_READY = False
 
@@ -205,8 +210,139 @@ def parse_method_descriptor(desc: str) -> tuple[list[str], str]:
 
 def javap(project: str, bug_id: int, version: str, class_name: str, cp_test: str) -> str:
     cws = container_workspace(project, bug_id, version)
-    cmd = f'cd "{cws}" && javap -public -s -classpath "{cp_test}" {class_name}'
+    cmd = (
+        f"cd {shlex.quote(cws)} && "
+        f"javap -public -s "
+        f"-classpath {shlex.quote(cp_test)} "
+        f"{shlex.quote(class_name)}"
+    )
     return docker_exec(cmd, timeout=120).stdout
+
+
+def parse_public_static_fields(javap_text: str) -> list[dict[str, str]]:
+    """Extract simple public static fields for singleton/default strategies."""
+    fields: list[dict[str, str]] = []
+    for raw in javap_text.splitlines():
+        line = raw.strip()
+        if not line.startswith("public static ") or "(" in line or not line.endswith(";"):
+            continue
+        tokens = line[:-1].split()
+        if len(tokens) < 4:
+            continue
+        fields.append({
+            "type": tokens[-2],
+            "name": tokens[-1],
+            "declaration": line,
+        })
+    return fields
+
+
+def make_construction_planner(
+    project: str,
+    bug_id: int,
+    fixed_cp: str,
+    settings: dict[str, Any],
+    primed: dict[str, str] | None = None,
+    fixed_bin: str | None = None,
+) -> ConstructionPlanner:
+    """Create a memoized, time/depth-bounded public API construction planner."""
+    text_cache = dict(primed or {})
+
+    def inspect_type(type_name: str) -> dict[str, Any]:
+        text = text_cache.get(type_name)
+        if text is None:
+            text = javap(project, bug_id, "f", type_name, fixed_cp)
+            text_cache[type_name] = text
+        methods, class_decl = parse_public_api(text, type_name)
+        return {
+            "class_decl": class_decl,
+            "constructors": parse_public_constructors(text, type_name),
+            "methods": methods,
+            "static_fields": parse_public_static_fields(text),
+        }
+
+    subtype_cache: dict[str, list[str]] = {}
+
+    def project_class_names() -> list[str]:
+        if not fixed_bin:
+            return []
+        fixed_ws = workspace(project, bug_id, "f")
+        candidate = Path(fixed_bin)
+        if candidate.is_absolute():
+            container_prefix = Path(container_workspace(project, bug_id, "f"))
+            try:
+                candidate = fixed_ws / candidate.relative_to(container_prefix)
+            except ValueError:
+                return []
+        else:
+            candidate = fixed_ws / candidate
+        if not candidate.is_dir():
+            return []
+        names = []
+        for class_file in candidate.rglob("*.class"):
+            relative = class_file.relative_to(candidate).with_suffix("")
+            name = ".".join(relative.parts)
+            if not re.search(r"\$\d+(?:$|\$)", name) and not name.endswith(("package-info", "module-info")):
+                names.append(name)
+        return sorted(set(names))
+
+    all_project_classes = project_class_names()
+
+    def find_concrete_subtypes(base_type: str) -> list[str]:
+        if base_type in subtype_cache:
+            return subtype_cache[base_type]
+        package = base_type.rsplit(".", 1)[0] if "." in base_type else ""
+        ordered = sorted(
+            (name for name in all_project_classes if name != base_type),
+            key=lambda name: (0 if name.startswith(package + ".") else 1, name),
+        )
+        scan_limit = max(1, int(settings.get("construction_subtype_scan_classes", 120)))
+        ordered = ordered[:scan_limit]
+        if not ordered:
+            subtype_cache[base_type] = []
+            return []
+        cws = container_workspace(project, bug_id, "f")
+        names = " ".join(shlex.quote(name) for name in ordered)
+        command = (
+            f"cd {shlex.quote(cws)} && javap -public "
+            f"-classpath {shlex.quote(fixed_cp)} {names}"
+        )
+        result = docker_exec(
+            command,
+            timeout=max(1, int(settings.get("construction_subtype_scan_timeout_sec", 10))),
+            check=False,
+        )
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_$]){re.escape(base_type)}(?![A-Za-z0-9_$])"
+        )
+        found: list[str] = []
+        for raw in result.stdout.splitlines():
+            declaration = raw.strip()
+            if not declaration.startswith("public ") or "{" not in declaration:
+                continue
+            if " interface " in f" {declaration} " or " abstract " in f" {declaration} ":
+                continue
+            if not pattern.search(declaration):
+                continue
+            match = re.search(r"\b(?:class|enum)\s+([^\s<{]+)", declaration)
+            if match and match.group(1) != base_type:
+                found.append(match.group(1))
+        subtype_cache[base_type] = sorted(set(found))[
+            : max(1, int(settings.get("construction_max_subtypes_per_type", 6)))
+        ]
+        return subtype_cache[base_type]
+
+    return ConstructionPlanner(
+        inspect_type,
+        PlannerLimits(
+            max_depth=max(1, int(settings.get("construction_max_depth", 3))),
+            max_inspected_types=max(1, int(settings.get("construction_max_inspected_types", 24))),
+            max_constructors_per_type=max(1, int(settings.get("construction_max_constructors_per_type", 8))),
+            max_factories_per_type=max(1, int(settings.get("construction_max_factories_per_type", 6))),
+            timeout_sec=max(0.1, float(settings.get("construction_planning_timeout_sec", 15))),
+        ),
+        find_concrete_subtypes=find_concrete_subtypes,
+    )
 
 
 def parse_public_api(javap_text: str, class_name: str) -> tuple[list[dict[str, Any]], str]:
@@ -244,6 +380,54 @@ def parse_public_api(javap_text: str, class_name: str) -> tuple[list[dict[str, A
             pending = None
     return methods, class_decl
 
+def parse_public_constructors(
+    javap_text: str,
+    class_name: str,
+) -> list[dict[str, Any]]:
+    """Extract public constructors and their JVM descriptors from javap output."""
+    constructors: list[dict[str, Any]] = []
+    pending: str | None = None
+    simple = class_name.rsplit(".", 1)[-1]
+
+    for raw in javap_text.splitlines():
+        line = raw.strip()
+
+        if line.startswith("public ") and "(" in line and line.endswith(";"):
+            before = line.split("(", 1)[0].strip()
+            declared_name = before.split()[-1]
+            short_name = declared_name.rsplit(".", 1)[-1]
+
+            if (
+                short_name == simple
+                or declared_name == class_name
+                or declared_name.endswith("." + simple)
+            ):
+                pending = line
+            else:
+                pending = None
+            continue
+
+        if pending and line.startswith("descriptor:"):
+            descriptor = line.split(":", 1)[1].strip()
+
+            try:
+                parameter_types, return_type = parse_method_descriptor(
+                    descriptor
+                )
+            except Exception:
+                pending = None
+                continue
+
+            if return_type == "void":
+                constructors.append({
+                    "declaration": pending,
+                    "descriptor": descriptor,
+                    "parameter_types": parameter_types,
+                })
+
+            pending = None
+
+    return constructors
 
 def public_noarg_instantiable(javap_text: str, class_name: str, class_decl: str) -> bool:
     """True when CandidateRunner can construct the configured class with getConstructor()."""
@@ -294,6 +478,92 @@ def default_setup_value(type_name: str) -> Any:
         return ""
     return None
 
+def default_constructor_value(type_name: str) -> Any:
+    """Return a deterministic value for a supported receiver constructor."""
+    if type_name == "boolean":
+        return False
+
+    if type_name in {
+        "byte", "short", "int", "long", "float", "double"
+    }:
+        return 0
+
+    if type_name == "char":
+        return "a"
+
+    if type_name in {
+        "java.lang.String",
+        "java.lang.Comparable",
+    }:
+        return "sqa"
+
+    raise ValueError(
+        f"Unsupported constructor parameter type: {type_name}"
+    )
+
+def choose_receiver_constructor(
+    javap_text: str,
+    class_name: str,
+    class_decl: str,
+) -> dict[str, Any] | None:
+    """
+    Select a deterministic public constructor whose parameters are limited to
+    primitive, String, or Comparable types.
+    """
+    declaration = class_decl.strip()
+
+    if not declaration.startswith("public "):
+        return None
+
+    if " interface " in f" {declaration} ":
+        return None
+
+    if " abstract " in f" {declaration} ":
+        return None
+
+    constructors = parse_public_constructors(
+        javap_text,
+        class_name,
+    )
+
+    supported = [
+        constructor
+        for constructor in constructors
+        if all(
+            type_name in SUPPORTED_CONSTRUCTOR_TYPES
+            for type_name in constructor["parameter_types"]
+        )
+    ]
+
+    if not supported:
+        return None
+
+    # เลือก constructor ที่มี parameter น้อยที่สุด
+    # ถ้าเท่ากันให้เรียงด้วย descriptor เพื่อให้ reproducible
+    supported.sort(
+        key=lambda constructor: (
+            len(constructor["parameter_types"]),
+            constructor["descriptor"],
+        )
+    )
+
+    selected = supported[0]
+    parameter_types = list(selected["parameter_types"])
+
+    return {
+        "strategy": (
+            "public_noarg"
+            if not parameter_types
+            else "public_parameterized"
+        ),
+        "declaration": selected["declaration"],
+        "descriptor": selected["descriptor"],
+        "parameter_types": parameter_types,
+        "values": [
+            default_constructor_value(type_name)
+            for type_name in parameter_types
+        ],
+    }
 
 def build_setup_actions(
     project: str,
@@ -302,6 +572,7 @@ def build_setup_actions(
     methods: list[dict[str, Any]],
     concrete_methods: list[dict[str, Any]],
     settings: dict[str, Any],
+    construction_planner: ConstructionPlanner | None = None,
 ) -> list[dict[str, Any]]:
     """Build a small, generic state-setup pool without trigger tests or patches.
 
@@ -315,22 +586,34 @@ def build_setup_actions(
     if max_actions == 0:
         return []
 
-    helper_cache: dict[str, bool] = {}
+    helper_cache: dict[str, dict[str, Any] | None] = {}
 
-    def helper_is_instantiable(type_name: str) -> bool:
+    def helper_plan(type_name: str) -> dict[str, Any] | None:
         if type_name in helper_cache:
             return helper_cache[type_name]
         if type_name.endswith("[]") or type_name in SUPPORTED_ARG_TYPES or type_name == "void":
-            helper_cache[type_name] = False
-            return False
+            helper_cache[type_name] = None
+            return None
+        if construction_planner is not None:
+            plan = construction_planner.plan(type_name)
+            helper_cache[type_name] = plan
+            return plan
         try:
             text = javap(project, bug_id, "f", type_name, fixed_cp)
             _, decl = parse_public_api(text, type_name)
             ok = public_noarg_instantiable(text, type_name, decl)
         except Exception:
             ok = False
-        helper_cache[type_name] = ok
-        return ok
+        plan = ({
+            "strategy": "constructor",
+            "type": type_name,
+            "class_name": type_name,
+            "parameter_types": [],
+            "arguments": [],
+            "cost": 3.0,
+        } if ok else None)
+        helper_cache[type_name] = plan
+        return plan
 
     unique: dict[tuple[str, str], dict[str, Any]] = {}
     for method in [*methods, *concrete_methods]:
@@ -352,12 +635,13 @@ def build_setup_actions(
         for type_name in param_types:
             if type_name in SUPPORTED_ARG_TYPES:
                 arguments.append({"kind": "value", "type": type_name, "value": default_setup_value(type_name)})
-            elif helper_is_instantiable(type_name):
-                arguments.append({"kind": "new", "type": type_name})
-                object_count += 1
             else:
-                supported = False
-                break
+                plan = helper_plan(type_name)
+                if plan is None:
+                    supported = False
+                    break
+                arguments.append({"kind": "plan", "type": type_name, "plan": plan})
+                object_count += 1
         if not supported:
             continue
         actions.append({
@@ -404,7 +688,15 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
     bug_id = int(case["bug_id"])
     ensure_worker()
     for version in ("f", "b"):
+        print(
+            f"    [prepare] {project}-{bug_id}{version} checkout",
+            flush=True,
+        )
         checkout(project, bug_id, version)
+        print(
+            f"    [prepare] {project}-{bug_id}{version} compile",
+            flush=True,
+        )
         compile_revision(project, bug_id, version)
 
     fixed_cp = export_property(project, bug_id, "f", "cp.test")
@@ -421,9 +713,46 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
         eligible = [m for m in eligible if m["name"] == requested_method]
     concrete_api_text = api_text if concrete_class == target_class else javap(project, bug_id, "f", concrete_class, fixed_cp)
     concrete_methods, concrete_decl = parse_public_api(concrete_api_text, concrete_class)
-    concrete_instantiable = public_noarg_instantiable(concrete_api_text, concrete_class, concrete_decl)
+
+
     settings = load_settings()
-    setup_actions = build_setup_actions(project, bug_id, fixed_cp, methods, concrete_methods, settings)
+    construction_planner = make_construction_planner(
+        project,
+        bug_id,
+        fixed_cp,
+        settings,
+        primed={concrete_class: concrete_api_text},
+        fixed_bin=fixed_bin,
+    )
+    construction_plan = construction_planner.plan(concrete_class)
+    construction_diagnostics = {
+        "failures": dict(construction_planner.failures),
+        "inspected_types": sorted(construction_planner.inspections),
+    }
+    print(
+        "    [prepare] construction="
+        + (str(construction_plan.get("strategy")) if construction_plan else "unsupported")
+        + f" inspected_types={len(construction_planner.inspections)}",
+        flush=True,
+    )
+    # Preserve the former flat metadata for old checkpoints/tools. New search
+    # and test emission use construction_plan whenever it is present.
+    receiver_constructor = choose_receiver_constructor(
+        concrete_api_text,
+        concrete_class,
+        concrete_decl,
+    )
+    concrete_instantiable = construction_plan is not None
+
+    setup_actions = build_setup_actions(
+        project,
+        bug_id,
+        fixed_cp,
+        methods,
+        concrete_methods,
+        settings,
+        construction_planner,
+    )
     setup_sequences = build_setup_sequences(setup_actions, settings)
     src, src_path = source_text(project, bug_id, target_class)
 
@@ -440,6 +769,9 @@ def prepare_case(case: dict[str, str]) -> dict[str, Any]:
         "target_selection_source": target_source,
         "concrete_class": concrete_class,
         "concrete_instantiable": concrete_instantiable,
+        "construction_plan": construction_plan,
+        "construction_diagnostics": construction_diagnostics,
+        "receiver_constructor": receiver_constructor,
         "class_declaration": class_decl,
         "concrete_class_declaration": concrete_decl,
         "public_api_text": api_text,
