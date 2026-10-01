@@ -1,306 +1,97 @@
-# SQA Defects4J Benchmark — Simple 3-Worker Version
+# SQA Defects4J Benchmark
 
-This repository compares four Java unit-test generation approaches on Defects4J:
+โปรเจกต์นี้เปรียบเทียบการสร้าง Java unit test อัตโนมัติด้วย **Hill Climbing, Alternating Variable Method (AVM), GPT และ Gemini** บนบั๊กจริงจาก Defects4J 854 เคสใน 17 โปรเจกต์ ใช้ JUnit 4 ตรวจเทสต์และ JaCoCo วัด coverage ของ target class
 
-- Hill Climbing
-- Alternating Variable Method (AVM)
-- GPT
-- Gemini
+## เอกสารสำหรับอ่านและส่งงาน
 
-The project is intentionally small enough for a 3-person student team to understand and operate. The four generators are separate, but checkout/evaluation/result handling is shared so all methods are measured the same way.
+| เอกสาร | เนื้อหา |
+| --- | --- |
+| [FINAL_REPORT.md](FINAL_REPORT.md) | รายงานฉบับสมบูรณ์: วิธีทดลอง ผลเปรียบเทียบ การวิเคราะห์ บทเรียน ปัญหา และข้อจำกัด |
+| [Howtouse.md](Howtouse.md) | ติดตั้ง วิเคราะห์ผลเดิม ประเมินเทสต์เดิม และรันการทดลองใหม่ |
+| [EXPERIMENT_PROTOCOL.md](EXPERIMENT_PROTOCOL.md) | นิยามตัวชี้วัด ขอบเขตการค้นหา configuration และเงื่อนไขการเปรียบเทียบ |
+| [ARTIFACTS.md](ARTIFACTS.md) | รายการ source code, test code, ผลทดสอบ, prompt, configuration และวิธีตรวจชุดส่งงาน |
 
-## Core files
+เอกสารเหล่านี้ตอบโจทย์ทั้งการเปรียบเทียบความสามารถและสรุปการเรียนรู้จากการทดลอง และการส่งหลักฐานที่ทำให้ผู้อ่านตรวจสอบและทำซ้ำได้
+
+## ผลที่มีอยู่ ณ 1 ตุลาคม 2026
+
+มีผล JSON **3,416 งาน** ครบ 854 เคส × 4 วิธี ไม่มี task ซ้ำหรือขาดตาม configuration ปัจจุบัน แต่ยังมี `error` 9 งาน และ HC/AVM มี `unsupported` วิธีละ 503 งาน การมีไฟล์ผลครบจึงไม่ได้หมายความว่าทุกงานสร้างเทสต์สำเร็จ
+
+| วิธี | งาน completed | ชุดเทสต์ valid | valid / completed | บั๊กที่ตรวจพบ / 854 | เวลาต่องานเฉลี่ย (วินาที) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Hill Climbing | 349 | 344 | 98.57% | 12 (1.41%) | 57.77 |
+| AVM | 350 | 344 | 98.29% | 11 (1.29%) | 54.08 |
+| GPT | 849 | 561 | 66.08% | 38 (4.45%) | 27.66 |
+| Gemini | 853 | 428 | 50.18% | 8 (0.94%) | 7.45 |
+
+ตารางเป็นผลรวมเชิงพรรณนา: validity และเวลาใช้เฉพาะงาน `completed` ส่วนอัตราตรวจบั๊กใช้ทั้ง 854 เคส ข้อมูลมี **สอง experiment_id** คือ `9f661b38cc1eee98` และ `1b010d74235e8785` แม้ทุก worker บันทึก Git commit เดียวกัน อ่านผลแยก experiment และการเปรียบเทียบเคสเดียวกันใน [รายงานฉบับสมบูรณ์](FINAL_REPORT.md) ก่อนสรุปความสามารถของแต่ละวิธี
+
+## กระบวนการทดลอง
+
+```mermaid
+flowchart TD
+    A[854 configured Defects4J cases] --> B[Checkout and compile fixed and buggy revisions]
+    B --> C[Fixed source and public API context]
+    C --> H[Hill Climbing]
+    C --> V[AVM]
+    C --> G[GPT]
+    C --> M[Gemini]
+    H --> T[Generated JUnit 4 test suite]
+    V --> T
+    G --> T
+    M --> T
+    T --> F[Compile and run on fixed revision]
+    F --> J[Measure target class coverage with JaCoCo]
+    F --> Q[Compile and run identical source on buggy revision]
+    J --> R[Per-task JSON and generated artifacts]
+    Q --> R
+    R --> S[CSV summaries and report analysis]
+```
+
+เทสต์ valid เมื่อ compile และรันผ่านบน fixed revision การตรวจบั๊กต้องใช้ source ของเทสต์เดิม compile ผ่านบน buggy revision แล้วรันไม่ผ่าน โดยผู้สร้างเทสต์ไม่ได้รับ buggy source, patch, diff, issue หรือ triggering test
+
+เมื่อ `target_class` ว่าง ระบบใช้ Defects4J `classes.modified` จึงเป็นการทดลองที่ทราบคลาสเป้าหมายระดับคลาส (target-aware) นอกจากนี้ข้อจำกัดจำนวนเทสต์ของ HC/AVM และ AI ต่างกัน จึงต้องอ่าน coverage ควบคู่กับจำนวนเทสต์และผลบนเคสร่วม
+
+## โครงสร้างไฟล์
 
 ```text
-run.py                  main runner, case partitioning, checkpoint/resume
-d4j.py                  Defects4J checkout/compile/API discovery
-evaluate.py             candidate fitness + JUnit evaluation + JaCoCo
-analyze.py              merge all members' JSON results into CSV
-algorithms/
-  hill_climbing.py
-  avm.py
-ai/
-  gpt.py
-  gemini.py
-harness/
-  CandidateRunner.java
-config/
-  cases.csv
-  settings.json
+run.py                       runner, checkpoint/resume, prompt construction
+d4j.py                       Defects4J checkout, compile, API discovery
+construction.py              bounded public-API construction planner
+evaluate.py                  candidate fitness, JUnit evaluation, JaCoCo
+analyze.py                   merge/deduplicate JSON and export standard CSV
+algorithms/                  hill_climbing.py, avm.py, candidate_archive.py
+ai/                          gpt.py, gemini.py
+harness/CandidateRunner.java  Java candidate execution
+config/                      cases.csv, settings.json
+prompts/                     GPT and Gemini templates
+docker/                      Dockerfile, compose.yaml
+tests/test_construction.py    tests for benchmark infrastructure
+tools/report_analysis.py      additional report analyses and artifact audit
+results/workers/              original JSON from all three workers
+results/summary/              original aggregate CSV
+generated_tests/              generated Java, actual prompts and responses
+docs/report_data/             reproduced summaries, subsets, errors, audit
+submission/                  packaged submission and checksums
 ```
 
-Docker/environment/config files are separate because they are infrastructure, not benchmark logic.
+`results/` และ `generated_tests/` ถูกละเว้นโดย `.gitignore` จึงต้องส่งชุด artifacts ควบคู่กับ repository ตาม [ARTIFACTS.md](ARTIFACTS.md)
 
-## Evaluation protocol
+สำหรับ GitHub ให้เก็บ source, เอกสาร, `docs/`, manifest/inventory และ `submission/` ไว้ใน repository โดย `.gitignore` อนุญาต archive final นี้ ไฟล์ผลฉบับเต็มอยู่ใน archive จึงไม่ต้องเพิ่ม raw results และ generated tests หลายพันไฟล์เข้า Git อีกชุด ไฟล์ pilot/backup, checkout เก่า, compiled classes และ cache ถูกนำออกจากโฟลเดอร์โปรเจกต์แล้ว
 
-For every configured Defects4J bug:
+## วิเคราะห์ผลเดิม
 
-1. Checkout both `<bug>f` and `<bug>b`.
-2. Generate/search using the fixed revision only.
-3. Build a JUnit test from the fixed behavior.
-4. Compile and run the generated test on the fixed revision.
-5. Measure final JaCoCo instruction/branch/line coverage on the fixed revision.
-6. Compile and run the exact same generated test on the buggy revision.
-7. `fault_detected = fixed passes AND buggy compiles AND buggy fails`.
-
-Do not feed patches, source diffs, issue descriptions, triggering tests, or developer bug-revealing tests into GPT/Gemini or the search algorithms.
-
-### Target selection note
-
-`target_class` can be frozen manually in `config/cases.csv`. If left blank, this implementation falls back to Defects4J `classes.modified` and records:
-
-```text
-target_selection_source = defects4j_classes.modified
-```
-
-That is a **target-aware** benchmark configuration. If your report requires a stricter no-bug-location protocol, freeze a target-selection policy before the final experiment and fill `target_class` explicitly instead of using the fallback.
-
-`concrete_class` remains an optional manual override. HC/AVM now run a bounded construction planner first. It recursively resolves public constructors, exact-type public static factories, singleton/default public static fields, primitives and boxed values, strings, enums, empty arrays, common collection interfaces, lightweight stream/reader/writer implementations, and a capped batch scan for concrete project subtypes of abstract/interface receivers. The chosen construction graph is deterministic and is recorded as `construction_plan` in metadata/results.
-
-Construction is deliberately separate from HC/AVM input search. Constructor dependencies are fixed structural values; only supported target-method inputs and bounded setup choices enter the search space. Cycles, non-public classes, unresolved abstract/domain interfaces, and graphs that exceed the configured depth/type/time limits remain `unsupported` instead of causing unbounded exploration.
-
-Runtime controls in `config/settings.json` cap planning, candidate execution, total search, and the complete algorithm run. The default algorithm budget is 180 seconds, with 110 seconds for search and 60 seconds reserved for final fixed/buggy evaluation. This budget starts after Defects4J checkout/compile preparation; a cold Docker checkout is infrastructure time and is reported separately by the console flow. Progress is line-buffered and printed during candidate evaluation.
-
-## 1. Setup
+ใช้ Python 3.10 ขึ้นไป คำสั่งเหล่านี้ไม่เรียก API และไม่รัน benchmark ใหม่:
 
 ```bash
-cp .env.example .env
+python3 tools/report_analysis.py
+python3 analyze.py --output docs/report_data/aggregate
 ```
 
-Edit `.env`:
+`analyze.py` ฉบับใน workspace นี้เตือนเมื่อรวมหลาย experiment_id แล้วเขียนผลรวม โดยคง ID ใน `all_results.csv` แต่ `summary_by_method.csv` รวมข้าม ID แล้ว ส่วน `tools/report_analysis.py` สร้างผลแยก experiment, เคสร่วม, รายการ error และ audit เพิ่มเติม ดูรายละเอียดการติดตั้งและทำซ้ำใน [Howtouse.md](Howtouse.md)
 
-```text
-D4J_ROOT=/home/YOUR_USER/defects4j
-LOCAL_UID=1000
-LOCAL_GID=1000
+## การรันใหม่
 
-GPT_API_KEY=...
-GEMINI_API_KEY=...
-```
+ทุกเครื่องต้องใช้ source/configuration/prompt เดียวกัน และตรวจ `experiment_id` ให้ตรงกันก่อนรัน แบ่งเคสที่เรียง `(project, bug_id)` เป็นช่วง 1–285, 286–570 และ 571–854 โดยแต่ละเครื่องรันทั้งสี่วิธี ใช้ seed 101 หนึ่งครั้งสำหรับ HC/AVM และ AI วิธีละหนึ่งครั้ง
 
-Set the **same model names on all three computers** in `config/settings.json`:
-
-```json
-"gpt_model": "YOUR_GPT_MODEL",
-"gemini_model": "YOUR_GEMINI_MODEL"
-```
-
-API endpoints and output/source limits are also frozen in `config/settings.json`, so they are included in the `experiment_id`.
-
-Install Python dependency:
-
-```bash
-python3 -m pip install -r requirements.txt
-```
-
-Check environment:
-
-```bash
-python3 d4j.py check
-```
-
-The Docker worker is persistent. JaCoCo CLI and agent are downloaded automatically the first time they are needed, then reused for the rest of the process.
-
-## 2. cases.csv
-
-Example:
-
-```csv
-project,bug_id,target_class,concrete_class,method,enabled
-Chart,1,,org.jfree.chart.renderer.category.BarRenderer,,true
-```
-
-Columns:
-
-- `project`, `bug_id`: Defects4J case.
-- `target_class`: optional explicit target. Blank uses the configured fallback.
-- `concrete_class`: optional public receiver override. Its construction graph must be resolvable within the configured planner limits.
-- `method`: optional. Leave blank to test up to `max_methods_per_case` eligible public methods.
-- `enabled`: `true` or `false`.
-
-Generate an inventory from the local Defects4J installation:
-
-```bash
-python3 d4j.py inventory --out config/cases.csv
-```
-
-This creates rows for all active bugs. You can then manually fill special `concrete_class` or `method` cells where required.
-
-## 3. Run one case first
-
-```bash
-python3 run.py --project Chart --bug 1 --worker member1
-```
-
-Or only selected methods:
-
-```bash
-python3 run.py --project Chart --bug 1 --methods hill_climbing avm
-```
-
-```bash
-python3 run.py --project Chart --bug 1 --methods gpt gemini
-```
-
-## 4. Split the 854 cases across 3 people
-
-Every member should use the **same Git commit**, `config/cases.csv`, and `config/settings.json`.
-
-The enabled cases are sorted deterministically by `(project, bug_id)` and then divided into three non-overlapping, contiguous ranges. Case ranges are 1-based and inclusive.
-
-Member 1:
-
-```bash
-python3 run.py \
-  --case-range 1-285 \
-  --methods hill_climbing avm gpt gemini \
-  --worker member1
-```
-
-Member 2:
-
-```bash
-python3 run.py \
-  --case-range 286-570 \
-  --methods hill_climbing avm gpt gemini \
-  --worker member2
-```
-
-Member 3:
-
-```bash
-python3 run.py \
-  --case-range 571-854 \
-  --methods hill_climbing avm gpt gemini \
-  --worker member3
-```
-
-Each assigned bug runs all four methods on the same worker machine. Use only the assigned `--case-range` command so every case is executed exactly once.
-
-Running all four methods for every assigned bug is preferable to assigning one algorithm per person, because HC/AVM/GPT/Gemini for a bug then share the same local environment.
-
-## 5. Checkpoint and resume
-
-Every seed/repetition is saved immediately as its own JSON result.
-
-Algorithm runs use the configured seeds, e.g.:
-
-```text
-seed_101.json
-seed_202.json
-seed_303.json
-```
-
-AI runs use:
-
-```text
-run_1.json
-run_2.json
-run_3.json
-```
-
-Re-run the same command after a crash, shutdown, or interruption. `completed` and `unsupported` tasks are skipped automatically.
-
-Use `--force` only if you intentionally want to rerun completed tasks.
-
-## 6. GPT/Gemini quota behavior
-
-Temporary 429/server errors are retried with backoff.
-
-If an API continues returning a quota/rate-limit condition, the current task is saved as:
-
-```text
-status = paused_quota
-```
-
-That provider is deferred for the rest of the current process, while the other methods continue.
-
-Later, after quota/credit resets, run the same command again. `paused_quota` is not considered complete, so it is retried. Already completed HC/AVM/GPT/Gemini tasks are not repeated.
-
-## 7. Result layout
-
-```text
-results/workers/
-  member1/
-    Chart/
-      1/
-        hill_climbing/
-          seed_101.json
-          seed_202.json
-          seed_303.json
-        avm/
-        gpt/
-        gemini/
-```
-
-Generated tests and AI prompt/response files are stored under:
-
-```text
-generated_tests/<worker>/<project>/<bug>/<method>/<run_id>/
-```
-
-Each JSON records the worker, Git commit, `experiment_id`, target selection source, model/seed, validity, fault detection, coverage, duration, and generated test path. The `experiment_id` hashes the benchmark code/config/prompt so results from mismatched experiment definitions are not silently combined.
-
-## 8. Merge the three members' results
-
-Copy each member's result directory into the same repository under `results/workers/` and run:
-
-```bash
-python3 analyze.py
-```
-
-Outputs:
-
-```text
-results/summary/all_results.csv
-results/summary/summary_by_method.csv
-results/summary/summary_by_project.csv
-```
-
-These files can be imported into Excel/Google Sheets for charts and statistical analysis. `summary_by_method.csv` reports both fault-detecting runs and unique Defects4J bugs detected, so repeated seeds/runs do not inflate the bug count.
-
-## 9. Search simplifications
-
-The algorithmic generators intentionally support a manageable student-project search space:
-
-- public target methods
-- primitive and `String` target arguments
-- public no-argument or supported public parameterized construction for the configured concrete receiver
-- a **small bounded stateful setup sequence** before the target call
-- setup actions are public instance `void` methods with at most the configured number of parameters
-- setup arguments may use primitive/String defaults or an exact public helper class with a public no-arg constructor
-- manually configured concrete receiver class when needed
-- final oracle derived from fixed behavior
-
-The stateful search is deliberately bounded by `stateful_max_setup_actions`, `stateful_max_setup_parameters`, `stateful_max_setup_steps`, and `stateful_max_sequences` in `config/settings.json`. It does not read trigger tests, patches, or known bug setups.
-
-Hill Climbing and AVM use the same candidate domain and evaluation infrastructure, but different search behavior:
-
-- Hill Climbing: seed-dependent setup exploration, random restarts, and local input/setup mutations.
-- AVM: deterministic categorical exploration of bounded setup sequences, followed by variable-by-variable exploratory moves and numeric pattern moves.
-
-This remains much simpler than a general Java object-graph generator. It will not construct arbitrary interfaces, multi-constructor dependency graphs, or deep object networks; unsupported cases are recorded instead of hidden by project-specific hardcoding.
-
-## 10. Recommended workflow
-
-Before launching hundreds of bugs:
-
-```text
-1. Run Chart-1 with HC/AVM only.
-2. Inspect the generated JUnit files and JSON.
-3. Run GPT/Gemini once each and confirm API configuration.
-4. Run 5–10 bugs with --limit.
-5. Freeze Git commit + settings + cases.csv.
-6. Start the three assigned case ranges.
-7. Merge and analyze after all workers finish.
-```
-
-Do not start the full Defects4J inventory until this pilot succeeds on all three computers.
-
-### Runtime warning
-
-HC/AVM still launch a Java candidate process and collect JaCoCo search coverage for each evaluated input. This keeps the implementation simple and transparent, but a full 854-bug run can take a long time. Use the pilot to measure average runtime before freezing `search_max_evaluations`, `max_methods_per_case`, and the number of repetitions. Do not change those settings after the final experiment starts.
-
-## Efficiency metrics recorded per run
-
-Each result now records `test_case_count`, `generation_time_sec`, and `evaluation_time_sec` in addition to total duration, validity, fault detection, and JaCoCo instruction/branch/line coverage. `analyze.py` also reports coverage-per-test and time-per-test indicators so methods that generate different numbers of JUnit test cases can be compared more fairly. Coverage itself remains the primary metric; coverage-per-test is a normalized efficiency indicator.
+การแก้เอกสารและเพิ่มเครื่องมือรายงานครั้งนี้ไม่ได้แก้ generator, evaluator, prompt หรือ configuration ของ benchmark ใช้ worker ชื่อใหม่เมื่อต้องการทดลองใหม่เพื่อเก็บผลชุดเดิมไว้ตรวจสอบ

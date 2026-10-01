@@ -1,0 +1,6 @@
+WARNING: Combining results from multiple experiment definitions: 1b010d74235e8785, 9f661b38cc1eee98
+Keep experiment_id in the output and disclose this difference as a limitation in the final report.
+Loaded 3416 result files; analyzing 3416 unique tasks
+/home/bismarck/sqa-defects4j-benchmark-simple-final/docs/report_data/aggregate/all_results.csv
+/home/bismarck/sqa-defects4j-benchmark-simple-final/docs/report_data/aggregate/summary_by_method.csv
+/home/bismarck/sqa-defects4j-benchmark-simple-final/docs/report_data/aggregate/summary_by_project.csv

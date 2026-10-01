@@ -1,31 +1,43 @@
-.env
-.venv/
-__pycache__/
-*.pyc
-.work/
-harness/classes/
-results/workers/
-results/tmp/
-logs/*.log
-generated_tests/**/*.java
-
 # Local secrets
 .env
+.env.*
+!.env.example
 
-# Python
+# Python environments and caches
+.venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Runtime / benchmark workspace
+# Runtime files (final evidence is distributed in submission/)
 .work/
+harness/classes/
+*.class
 logs/
-
-# Pilot/generated outputs
 results/
 generated_tests/
 
-# Local downloaded tools
+# Downloaded coverage tools
 tools/jacoco/*.jar
 
-# Windows metadata
+# Old experiments, duplicate bundles and editor backups
+ai_old_backup/
+pilot_backup_*/
+*_final_bundle.tar.gz
+*.bak
+*_backup.csv
+*.tmp
+*.swp
+*~
+
+# Keep the reviewed final submission archive in Git
+*.tar.gz
+!/submission/sqa-final-submission.tar.gz
+
+# Operating-system metadata
 *:Zone.Identifier
+.DS_Store
+Thumbs.db

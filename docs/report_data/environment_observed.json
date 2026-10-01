@@ -1,0 +1,14 @@
+{
+  "observed_on": "2026-10-01",
+  "note": "Observed on the documentation machine; historical worker environments were not recorded.",
+  "python": "3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0]",
+  "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+  "requests": "2.34.2",
+  "defects4j_local_commit": "8c16da8230843cdc918eaf4ddb449637f02b83c6",
+  "defects4j_local_readme_version": "3.0.1",
+  "dockerfile_java_major": 11,
+  "dockerfile_base_image": "ubuntu:20.04",
+  "container_timezone": "America/Los_Angeles",
+  "container_locale": "C.UTF-8",
+  "jacoco_version_in_evaluate_py": "0.8.13"
+}

@@ -1,2 +1,0 @@
-project,bug_id,target_class,concrete_class,method,enabled
-Chart,1,,org.jfree.chart.renderer.category.BarRenderer,,true

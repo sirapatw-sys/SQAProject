@@ -1,0 +1,119 @@
+{
+  "raw_results": 3416,
+  "unique_tasks": 3416,
+  "expected_tasks": 3416,
+  "missing_tasks": [],
+  "unexpected_tasks": [],
+  "duplicate_files": 0,
+  "bugs": 854,
+  "projects": {
+    "Chart": 26,
+    "Cli": 39,
+    "Closure": 174,
+    "Codec": 18,
+    "Collections": 28,
+    "Compress": 47,
+    "Csv": 16,
+    "Gson": 18,
+    "JacksonCore": 26,
+    "JacksonDatabind": 110,
+    "JacksonXml": 6,
+    "Jsoup": 93,
+    "JxPath": 22,
+    "Lang": 61,
+    "Math": 106,
+    "Mockito": 38,
+    "Time": 26
+  },
+  "experiment_ids": {
+    "1b010d74235e8785": 1136,
+    "9f661b38cc1eee98": 2280
+  },
+  "git_commits": {
+    "d7f55a4e608de5ae552bdccdb52acf50b2d62b14": 3416
+  },
+  "current_experiment_id": "9f661b38cc1eee98",
+  "current_git_commit": "d7f55a4e608de5ae552bdccdb52acf50b2d62b14",
+  "recorded_timestamp_utc_min": "2026-09-23T07:23:56.237507+00:00",
+  "recorded_timestamp_utc_max": "2026-09-28T14:46:14.184930+00:00",
+  "common_completed_cases": 349,
+  "common_valid_cases": 231,
+  "detected_union": 51,
+  "detections_by_method": {
+    "hill_climbing": 12,
+    "avm": 11,
+    "gpt": 38,
+    "gemini": 8
+  },
+  "exclusive_detections": {
+    "hill_climbing": 0,
+    "avm": 0,
+    "gpt": 32,
+    "gemini": 5
+  },
+  "hc_avm_detection_overlap": 11,
+  "referenced_artifact_counts": {
+    "generated_test": 2408,
+    "prompt_file": 1707,
+    "response_file": 1706
+  },
+  "missing_referenced_artifacts": {
+    "generated_test": [],
+    "prompt_file": [],
+    "response_file": []
+  },
+  "unreferenced_java_files": [],
+  "worker_artifacts": {
+    "member1_final": {
+      "java_files": 756,
+      "prompt_files": 570,
+      "response_files": 570
+    },
+    "member2": {
+      "java_files": 798,
+      "prompt_files": 570,
+      "response_files": 570
+    },
+    "worker3": {
+      "java_files": 854,
+      "prompt_files": 567,
+      "response_files": 566
+    }
+  },
+  "worker_ranges": {
+    "member1_final": {
+      "start": 1,
+      "end": 285,
+      "cases": 285,
+      "contiguous": true
+    },
+    "member2": {
+      "start": 286,
+      "end": 570,
+      "cases": 285,
+      "contiguous": true
+    },
+    "worker3": {
+      "start": 571,
+      "end": 854,
+      "cases": 284,
+      "contiguous": true
+    }
+  },
+  "meta_files": 288,
+  "log_files": 0,
+  "provider_models": {
+    "gpt": {
+      "gpt-5.6-terra": 853,
+      "not_recorded": 1
+    },
+    "gemini": {
+      "gemini-3.5-flash-lite": 854
+    }
+  },
+  "analysis_source_sha256": {
+    "analyze.py": "52ad1be2899e093d87a12069ae170bf948531bb02469475ef194c53fd2b8e1b4",
+    "tools/report_analysis.py": "2054995ed617eb3ded42993f3345f6fc5fddde58fc8d8399a16cde913ccd1cdf"
+  },
+  "path_resolution": "Convert backslashes to forward slashes for artifact lookup; preserve raw JSON."
+}

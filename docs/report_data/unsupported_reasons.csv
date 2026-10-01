@@ -1,0 +1,7 @@
+method,reason,tasks
+avm,Construction planner could not build the configured concrete_class within its public-API depth/type/time limits,380
+avm,No public methods with supported primitive/String arguments,94
+avm,"No valid candidates were found with the selected receiver constructor, setup sequence, and supported target methods.",29
+hill_climbing,Construction planner could not build the configured concrete_class within its public-API depth/type/time limits,380
+hill_climbing,No public methods with supported primitive/String arguments,94
+hill_climbing,"No valid candidates were found with the selected receiver constructor, setup sequence, and supported target methods.",29

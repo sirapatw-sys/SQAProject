@@ -1,0 +1,71 @@
+{
+  "description": "Final experiment payload before adding this inventory and FILE_MANIFEST.sha256.",
+  "payload_files": 9583,
+  "payload_bytes": 62417800,
+  "categories": {
+    "ai": {
+      "files": 3,
+      "bytes": 13335
+    },
+    "algorithms": {
+      "files": 4,
+      "bytes": 24209
+    },
+    "config": {
+      "files": 2,
+      "bytes": 18364
+    },
+    "docker": {
+      "files": 2,
+      "bytes": 1233
+    },
+    "docs": {
+      "files": 21,
+      "bytes": 1833574
+    },
+    "generated_tests": {
+      "files": 5821,
+      "bytes": 20420197
+    },
+    "harness": {
+      "files": 1,
+      "bytes": 21919
+    },
+    "prompts": {
+      "files": 2,
+      "bytes": 4155
+    },
+    "results": {
+      "files": 3709,
+      "bytes": 38922064
+    },
+    "root_source_and_documents": {
+      "files": 13,
+      "bytes": 230883
+    },
+    "tests": {
+      "files": 1,
+      "bytes": 7542
+    },
+    "tools": {
+      "files": 4,
+      "bytes": 920325
+    }
+  },
+  "raw_task_results": 3416,
+  "generated_java_files": 2408,
+  "actual_prompt_files": 1707,
+  "actual_response_files": 1706,
+  "exclusions": [
+    ".env and credentials",
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".work",
+    "results/tmp",
+    "Windows download metadata and editor backups",
+    "compiled harness classes",
+    "pilot/AI backups",
+    "original duplicate worker bundles"
+  ]
+}

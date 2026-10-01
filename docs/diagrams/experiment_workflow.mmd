@@ -1,0 +1,19 @@
+flowchart TD
+    C[Case configuration] --> P[Checkout fixed and buggy revisions]
+    P --> X[Fixed source, API and construction metadata]
+    X --> H[HC or AVM search with fixed coverage fitness]
+    X --> A[GPT or Gemini with saved prompt and response]
+    H --> T[JUnit 4 source]
+    A --> T
+    T --> F{Fixed compiles and passes?}
+    F -->|No| I[Invalid test; skip buggy evaluation]
+    F -->|Yes| V[Valid test; collect target class coverage]
+    V --> B{Same source compiles on buggy?}
+    B -->|No| N[No fault detected by this protocol]
+    B -->|Yes| Q{Buggy test fails?}
+    Q -->|Yes| D[Fault detected]
+    Q -->|No| N
+    I --> R[Raw task JSON with status and output tails]
+    N --> R
+    D --> R
+    R --> S[Aggregate, experiment groups and common case analyses]

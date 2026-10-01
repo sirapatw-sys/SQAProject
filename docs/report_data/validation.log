@@ -1,0 +1,34 @@
+Documentation and evidence verification: 2026-10-01 (Asia/Bangkok)
+No benchmark generation or remote API calls were made for this report.
+Initial packaged file manifest: all member checksums passed.
+$ python3 analyze.py --output verification/aggregate
+WARNING: Combining results from multiple experiment definitions: 1b010d74235e8785, 9f661b38cc1eee98
+Keep experiment_id in the output and disclose this difference as a limitation in the final report.
+Loaded 3416 result files; analyzing 3416 unique tasks
+/tmp/sqa-submission-check-nyr7olqs/verification/aggregate/all_results.csv
+/tmp/sqa-submission-check-nyr7olqs/verification/aggregate/summary_by_method.csv
+/tmp/sqa-submission-check-nyr7olqs/verification/aggregate/summary_by_project.csv
+$ python3 tools/report_analysis.py --output verification/report_data
+Analyzed 3416 tasks; common completed=349, common valid=231
+Experiment IDs: 1b010d74235e8785, 9f661b38cc1eee98
+Detected union=51; missing artifacts=0
+All 4 original standard CSV files reproduced byte-for-byte from extracted archive.
+Six additional result CSVs reproduced byte-for-byte from extracted archive.
+Task inventory: 3,416 expected and unique; no missing, extra or duplicate tasks.
+Referenced artifacts: 2,408 Java, 1,707 prompts and 1,706 responses, all present after path normalization.
+All recorded Java test counts match source; coverage arithmetic and completed fault-detection invariants passed.
+Existing infrastructure tests: python3 -m unittest discover -s tests -v; 10 tests passed (recorded earlier in this session).
+Generator/evaluator/config/prompt experiment_id remains 9f661b38cc1eee98.
+Markdown structure: balanced fences and all 110 local links exist in the workspace (distribution archive links intentionally refer outside the archive).
+
+GitHub preparation verification: 2026-10-01 (Asia/Bangkok)
+- Old checkout, pilot/AI backups, duplicate worker bundles and unused case configuration moved outside the repository.
+- Previous submission archive/checksums retained in the external cleanup backup.
+- Three unreferenced generated Java files moved to external backup; 2,408 referenced Java files remain.
+- Python caches, compiled harness classes, empty runtime directories and Windows download metadata removed.
+- All 3,416 task JSON, 1,707 prompts and 1,706 responses remain, with no missing referenced artifacts.
+- All 4 aggregate CSV files still match original final results byte-for-byte.
+- Benchmark experiment_id remains 9f661b38cc1eee98.
+- Markdown links and code fences checked after cleanup.
+- .env and runtime/backup files are ignored; .env.example, report data/logs and the final submission archive remain eligible for Git.
+- No Git candidate file is 50 MiB or larger; git diff --check and git add --dry-run passed.

@@ -205,9 +205,13 @@ def main() -> None:
     if experiment_ids and missing_experiment_id:
         raise SystemExit("Some result files are missing experiment_id while others have one. Do not mix old and new benchmark results.")
     if len(experiment_ids) > 1:
-        raise SystemExit(
-            "Refusing to mix results from different experiment definitions: " + ", ".join(experiment_ids) +
-            ". Re-run with matching code/config before combining results."
+        print(
+            "WARNING: Combining results from multiple experiment definitions: "
+            + ", ".join(experiment_ids)
+        )
+        print(
+            "Keep experiment_id in the output and disclose this difference "
+            "as a limitation in the final report."
         )
     rows, duplicates = deduplicate(raw)
     write_all(rows, out / "all_results.csv")

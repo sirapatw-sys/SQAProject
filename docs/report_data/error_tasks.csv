@@ -1,0 +1,10 @@
+project,bug_id,method,worker,experiment_id,status,valid_test,fault_detected,error,result_file
+Compress,42,gemini,member2,9f661b38cc1eee98,error,True,False,Final JaCoCo coverage was not collected successfully,results/workers/member2/Compress/42/gemini/run_1.json
+Compress,42,gpt,member2,9f661b38cc1eee98,error,True,False,Final JaCoCo coverage was not collected successfully,results/workers/member2/Compress/42/gpt/run_1.json
+Time,26,gpt,worker3,1b010d74235e8785,error,,,"prepare_case: Command '['docker', 'compose', '--env-file', '.env', '-f', 'docker/compose.yaml', 'exec', '-T', 'worker', 'bash', '-lc', 'cd ""/workspace/.work/Time-26f"" && defects4j export -p ""cp.test"" -o "".sqa_export_cp.test.txt""']' timed out after 120 seconds",results/workers/worker3/Time/26/gpt/run_1.json
+Time,7,gpt,worker3,1b010d74235e8785,error,,,"network_error: HTTPSConnectionPool(host='gen.ai.kku.ac.th', port=443): Max retries exceeded with url: /api/v1/chat/completions (Caused by NameResolutionError(""HTTPSConnection(host='gen.ai.kku.ac.th', port=443): Failed to resolve 'gen.ai.kku.ac.th' ([Errno 11001] getaddrinfo failed)""))",results/workers/worker3/Time/7/gpt/run_1.json
+Lang,11,hill_climbing,worker3,1b010d74235e8785,error,,,evaluate: 'NoneType' object has no attribute 'splitlines',results/workers/worker3/Lang/11/hill_climbing/seed_101.json
+Lang,12,avm,worker3,1b010d74235e8785,error,,,evaluate: 'NoneType' object has no attribute 'splitlines',results/workers/worker3/Lang/12/avm/seed_101.json
+Lang,12,hill_climbing,worker3,1b010d74235e8785,error,,,evaluate: 'NoneType' object has no attribute 'splitlines',results/workers/worker3/Lang/12/hill_climbing/seed_101.json
+Cli,21,gpt,member1_final,9f661b38cc1eee98,error,True,True,Final JaCoCo coverage was not collected successfully,results/workers/member1_final/Cli/21/gpt/run_1.json
+Cli,16,gpt,member1_final,9f661b38cc1eee98,error,True,False,Final JaCoCo coverage was not collected successfully,results/workers/member1_final/Cli/16/gpt/run_1.json

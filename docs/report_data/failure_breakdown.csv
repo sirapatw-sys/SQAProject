@@ -1,0 +1,5 @@
+method,tasks,completed,unsupported,error,paused_quota,fixed_compile_failed,fixed_test_failed,buggy_compile_failed,valid_but_error,search_budget_exhausted,more_tests_than_target_methods,more_than_five_tests,zero_target_methods,median_duration_sec
+hill_climbing,854,349,503,2,0,0,5,2,0,103,0,248,0,41.00041159999091
+avm,854,350,503,1,0,0,6,2,0,81,0,261,0,35.87238264900043
+gpt,854,849,0,5,0,91,197,6,3,0,141,0,258,24.450048294
+gemini,854,853,0,1,0,343,82,6,1,0,277,39,258,4.86504362300002
