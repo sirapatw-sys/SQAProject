@@ -86,27 +86,48 @@ python3 run.py \
 สรุปว่าตรวจพบบั๊กได้หรือไม่
 ```
 
-## 3. ดูผล
+## 3. สรุปผลแบบอ่านง่าย
 
-ผลอยู่ที่
+หลังรันเสร็จ ให้รวมผลของ worker `demo`
+
+```bash
+python3 analyze.py \
+  --input results/workers/demo \
+  --output results/demo_summary
+```
+
+จากนั้นแสดงตารางสั้น ๆ ใน Terminal
+
+```bash
+python3 tools/demo_summary.py results/demo_summary/summary_by_method.csv
+```
+
+ตัวอย่างหน้าตา:
+
+```text
+=== Demo Summary ===
+Method          Valid  Bug  Branch Cov.  Line Cov.  Time
+---------------------------------------------------------
+hill_climbing   YES    YES  18.5%        31.2%      42.1s
+avm             YES    NO   20.1%        32.4%      38.7s
+gpt             YES    YES  28.4%        35.6%      21.3s
+gemini          YES    NO   25.7%        34.1%       6.8s
+```
+
+ค่าที่ดูตอน Demo:
+
+- **Valid** — ชุดทดสอบใช้ได้หรือไม่
+- **Bug** — ตรวจพบบั๊กหรือไม่
+- **Branch / Line Cov.** — ครอบคลุมโค้ดเท่าไร
+- **Time** — ใช้เวลาเท่าไร
+
+ไฟล์ผลฉบับเต็มยังอยู่ที่
 
 ```text
 results/workers/demo/Chart/24/
 generated_tests/demo/Chart/24/
+results/demo_summary/
 ```
-
-ตัวอย่างดูผล GPT
-
-```bash
-python3 -m json.tool results/workers/demo/Chart/24/gpt/run_1.json
-```
-
-ค่าหลักที่ใช้ดูตอน Demo:
-
-- `valid_test` — test ใช้งานได้หรือไม่
-- `fault_detected` — ตรวจพบบั๊กหรือไม่
-- `coverage` — ครอบคลุมโค้ดเท่าไร
-- `duration_sec` — ใช้เวลาเท่าไร
 
 ## ถ้าไม่มี API key
 
