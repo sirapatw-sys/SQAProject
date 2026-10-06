@@ -147,6 +147,14 @@ python3 run.py \
   --worker demo \
   --force
 ```
+ถ้าจะรัน เคสลำดับ 1–5 ตาม config/cases.csv ใช้ --case-range 1-5 ได้เลย
+```bash
+python3 run.py \
+  --case-range 1-5 \
+  --methods hill_climbing avm gpt gemini \
+  --worker demo \
+  --force
+```
 
 ระบบจะทำตามลำดับ
 
